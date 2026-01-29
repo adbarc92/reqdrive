@@ -57,21 +57,18 @@ run_agent() {
     echo "{\"iteration\": $i, \"remaining\": $remaining, \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       > "$agent_dir/iteration-state.json"
 
-    # Read the prompt
-    local prompt_content
-    prompt_content=$(cat "$prompt_file")
-
-    # Run Claude with timeout
+    # Run Claude with prompt piped via stdin (Ralph pattern)
+    # - Pipe prompt file to Claude instead of -p flag (avoids quoting issues)
+    # - Use tee to show output in real-time while capturing
+    # - Use || true to continue loop even if Claude exits non-zero
     log_debug "  Running Claude (timeout: ${timeout_secs}s)"
 
     local output=""
     local claude_status=0
 
-    # Use run_with_timeout from errors.sh
-    # Note: </dev/null prevents stdin from being passed through
     # shellcheck disable=SC2086
-    output=$(run_with_timeout "$timeout_secs" \
-      claude $security_args --model "$model" -p "$prompt_content" </dev/null 2>&1) || claude_status=$?
+    output=$(cat "$prompt_file" | run_with_timeout "$timeout_secs" \
+      claude $security_args --model "$model" 2>&1 | tee /dev/stderr) || claude_status=$?
 
     # Handle timeout
     if [ "$claude_status" -eq 124 ] || [ "$claude_status" -eq 137 ]; then
