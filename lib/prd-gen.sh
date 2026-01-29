@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# prd-gen.sh — PRD generation via Claude Code
+# prd-gen.sh — PRD generation via Claude Code with error handling
 # Sourced by run-single-req.sh
+
+# Requires errors.sh to be loaded
 
 generate_prd() {
   local req_file="$1"
   local worktree_path="$2"
   local model="$3"
+  local timeout_secs="${4:-600}"  # Default 10 minutes
 
   local agent_dir="$worktree_path/$REQDRIVE_PATHS_AGENT_DIR"
+  local prd_file="$agent_dir/prd.json"
   local req_basename
   req_basename=$(basename "$req_file")
 
-  echo "  Generating PRD from $req_basename"
-  echo "  Output: $agent_dir/prd.json"
+  log_info "  Generating PRD from $req_basename"
+  log_info "  Output: $prd_file"
+
+  # Ensure agent directory exists
+  mkdir -p "$agent_dir"
 
   local branch_prefix="$REQDRIVE_AGENT_BRANCH_PREFIX"
   local project_title="$REQDRIVE_PROJECT_TITLE"
@@ -22,9 +29,9 @@ generate_prd() {
   local security_args
   security_args=$(reqdrive_claude_security_args prd)
 
-  # Use Claude Code with the design-to-prd skill to generate prd.json
-  # shellcheck disable=SC2086
-  claude $security_args --model "$model" -p "$(cat <<PROMPT
+  # Build the prompt
+  local prompt
+  prompt=$(cat <<PROMPT
 Load the design-to-prd skill. Then process the requirements document at:
 $req_file
 
@@ -34,7 +41,7 @@ Configuration:
 - Audience: AI agents (very explicit, small stories)
 - Existing systems: Yes, documented in $context_file
 
-Output the agent-ready prd.json to: $agent_dir/prd.json
+Output the agent-ready prd.json to: $prd_file
 Also output the human-readable PRD to: $agent_dir/prd-readable.md
 
 The prd.json must follow this exact structure:
@@ -65,22 +72,65 @@ Rules:
 - Priority should be 1 (highest) to N (lowest), assigned based on dependency order
 - acceptanceCriteria should be concrete, testable statements
 PROMPT
-)" 2>&1
+  )
 
-  # Verify prd.json was created
-  if [ ! -f "$agent_dir/prd.json" ]; then
-    echo "  ERROR: PRD generation failed - no prd.json produced"
-    return 1
+  # Run Claude with timeout
+  log_debug "  Running Claude for PRD generation (timeout: ${timeout_secs}s)"
+
+  local output=""
+  local claude_status=0
+
+  # shellcheck disable=SC2086
+  output=$(run_with_timeout "$timeout_secs" \
+    claude $security_args --model "$model" -p "$prompt" 2>&1) || claude_status=$?
+
+  # Save output for debugging regardless of outcome
+  echo "$output" > "$agent_dir/prd-gen.log"
+
+  # Handle timeout
+  if [ "$claude_status" -eq 124 ] || [ "$claude_status" -eq 137 ]; then
+    log_error "  PRD generation timed out after ${timeout_secs}s"
+    return $ERR_CLAUDE_TIMEOUT
   fi
 
-  # Validate JSON structure
-  if ! jq empty "$agent_dir/prd.json" 2>/dev/null; then
-    echo "  ERROR: Generated prd.json is not valid JSON"
-    return 1
+  # Handle other Claude errors
+  if [ "$claude_status" -ne 0 ]; then
+    log_error "  Claude failed with status $claude_status"
+    log_debug "  Output: $(echo "$output" | tail -10)"
+    return $ERR_CLAUDE
+  fi
+
+  # Verify prd.json was created
+  if [ ! -f "$prd_file" ]; then
+    log_error "  PRD generation failed - no prd.json produced"
+    log_debug "  Check $agent_dir/prd-gen.log for details"
+    return $ERR_PRD
+  fi
+
+  # Validate JSON structure (detailed validation done by caller)
+  if ! jq empty "$prd_file" 2>/dev/null; then
+    log_error "  Generated prd.json is not valid JSON"
+
+    # Try to extract JSON from output (Claude sometimes wraps in markdown)
+    log_info "  Attempting to extract JSON from output..."
+    local extracted
+    extracted=$(echo "$output" | sed -n '/^{/,/^}/p' | head -1000)
+    if echo "$extracted" | jq empty 2>/dev/null; then
+      echo "$extracted" > "$prd_file"
+      log_info "  Extracted valid JSON from output"
+    else
+      return $ERR_PRD_INVALID
+    fi
   fi
 
   local story_count
-  story_count=$(jq '.userStories | length' "$agent_dir/prd.json")
-  echo "  PRD generated: $story_count stories"
+  story_count=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo 0)
+
+  if [ "$story_count" -eq 0 ]; then
+    log_error "  PRD has no user stories"
+    return $ERR_PRD_INVALID
+  fi
+
+  log_info "  PRD generated: $story_count stories"
   return 0
 }

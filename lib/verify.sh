@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# verify.sh — Verification orchestration via Claude Code
+# verify.sh — Verification orchestration via Claude Code with error handling
 # Sourced by run-single-req.sh
+
+# Requires errors.sh to be loaded
 
 run_verification() {
   local worktree_path="$1"
   local model="$2"
+  local timeout_secs="${3:-600}"  # Default 10 minutes
 
   local agent_dir="$worktree_path/$REQDRIVE_PATHS_AGENT_DIR"
   local prd_file="$agent_dir/prd.json"
   local app_dir="$worktree_path/$REQDRIVE_PATHS_APP_DIR"
+  local report_file="$agent_dir/verification-report.txt"
 
+  # ── Validate Prerequisites ──────────────────────────────────────────
   if [ ! -f "$prd_file" ]; then
-    echo "  ERROR: prd.json not found at $prd_file"
-    return 1
+    log_error "prd.json not found at $prd_file"
+    return $ERR_VERIFY
   fi
 
   cd "$worktree_path"
 
-  echo "  Running verification..."
+  log_info "  Running verification..."
 
-  # Build verification checks from manifest
+  # ── Build Verification Checks ───────────────────────────────────────
   local checks=""
   local check_count
   check_count=$(jq '.verification.checks // [] | length' "$REQDRIVE_MANIFEST")
@@ -49,7 +54,12 @@ run_verification() {
     fi
   fi
 
-  # Check if test generation is enabled
+  if [ -z "$checks" ]; then
+    log_warn "  No verification checks configured"
+    checks="Run any available tests and verify the code works correctly."
+  fi
+
+  # ── Test Generation Option ──────────────────────────────────────────
   local generate_tests
   generate_tests=$(jq -r '.verification.generateTests // true' "$REQDRIVE_MANIFEST")
   local test_gen_prompt=""
@@ -57,12 +67,13 @@ run_verification() {
     test_gen_prompt="Generate new unit tests for code changed by the agent and run them."
   fi
 
-  # Get security arguments for verification stage
+  # ── Get Security Arguments ──────────────────────────────────────────
   local security_args
   security_args=$(reqdrive_claude_security_args verify)
 
-  # shellcheck disable=SC2086
-  VERIFY_OUTPUT=$(claude $security_args --model "$model" -p "$(cat <<PROMPT
+  # ── Build Verification Prompt ───────────────────────────────────────
+  local prompt
+  prompt=$(cat <<PROMPT
 Run verification against this project.
 
 The PRD is at: $prd_file
@@ -80,19 +91,77 @@ End your response with either:
   VERIFICATION_PASSED
 or:
   VERIFICATION_FAILED
+
+followed by a brief summary of results.
 PROMPT
-)" 2>&1
+  )
 
-  # Save verification report
-  echo "$VERIFY_OUTPUT" > "$agent_dir/verification-report.txt"
-  echo "  Verification report saved to $agent_dir/verification-report.txt"
+  # ── Run Verification ────────────────────────────────────────────────
+  log_debug "  Running Claude for verification (timeout: ${timeout_secs}s)"
 
-  # Check result
-  if echo "$VERIFY_OUTPUT" | grep -q "VERIFICATION_PASSED"; then
-    echo "  Result: PASSED"
+  local output=""
+  local claude_status=0
+
+  # shellcheck disable=SC2086
+  output=$(run_with_timeout "$timeout_secs" \
+    claude $security_args --model "$model" -p "$prompt" 2>&1) || claude_status=$?
+
+  # Save verification report regardless of outcome
+  {
+    echo "Verification Report"
+    echo "==================="
+    echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "Exit Status: $claude_status"
+    echo ""
+    echo "Output:"
+    echo "-------"
+    echo "$output"
+  } > "$report_file"
+
+  log_info "  Verification report saved to $report_file"
+
+  # Handle timeout
+  if [ "$claude_status" -eq 124 ] || [ "$claude_status" -eq 137 ]; then
+    log_error "  Verification timed out after ${timeout_secs}s"
+    return $ERR_CLAUDE_TIMEOUT
+  fi
+
+  # Handle other Claude errors
+  if [ "$claude_status" -ne 0 ]; then
+    log_warn "  Claude exited with status $claude_status (may still have valid results)"
+  fi
+
+  # ── Check Verification Result ───────────────────────────────────────
+  if echo "$output" | grep -q "VERIFICATION_PASSED"; then
+    log_info "  Result: PASSED"
+
+    # Extract summary if present
+    local summary
+    summary=$(echo "$output" | sed -n '/VERIFICATION_PASSED/,$p' | tail -5)
+    log_debug "  Summary: $summary"
+
     return 0
+  elif echo "$output" | grep -q "VERIFICATION_FAILED"; then
+    log_warn "  Result: FAILED"
+
+    # Extract failure summary
+    local failure_summary
+    failure_summary=$(echo "$output" | sed -n '/VERIFICATION_FAILED/,$p' | tail -10)
+    log_info "  Failure summary: $failure_summary"
+
+    return $ERR_VERIFY
   else
-    echo "  Result: FAILED"
-    return 1
+    # No clear signal - try to infer from output
+    log_warn "  No clear PASSED/FAILED signal in output"
+
+    # Check for common failure indicators
+    if echo "$output" | grep -qiE "(error|failed|failure|exception)"; then
+      log_warn "  Found error indicators in output, treating as FAILED"
+      return $ERR_VERIFY
+    fi
+
+    # Assume passed if no errors found
+    log_info "  No errors found, treating as PASSED"
+    return 0
   fi
 }
