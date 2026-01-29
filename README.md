@@ -18,6 +18,8 @@ Requirements-driven development pipeline. Automates the flow from requirements d
 - `gh` (GitHub CLI, authenticated)
 - `claude` (Claude Code CLI)
 
+**Windows Users:** reqdrive requires a Bash environment. Use Git Bash or WSL2.
+
 ## Installation
 
 ```bash
@@ -265,6 +267,88 @@ For each requirement, the pipeline runs these stages:
 5. **PR Creation** — Creates a GitHub PR with validation checklist
 
 If verification fails, stages 3-4 retry up to `verification.maxRetries` times. If all retries fail, the PR is created as a draft.
+
+## Testing
+
+reqdrive includes a comprehensive test suite using [bats-core](https://github.com/bats-core/bats-core).
+
+### Running Tests
+
+```bash
+# Install bats-core
+brew install bats-core  # macOS
+apt-get install bats    # Ubuntu/Debian
+
+# Run all tests
+./tests/run-tests.sh
+
+# Run only unit tests
+./tests/run-tests.sh --unit
+
+# Run only E2E tests
+./tests/run-tests.sh --e2e
+
+# Run with verbose output
+./tests/run-tests.sh --verbose
+
+# Run specific test file
+bats tests/unit/config.bats
+```
+
+### Test Structure
+
+```
+tests/
+├── run-tests.sh           # Test runner script
+├── test_helper/
+│   └── common.bash        # Shared utilities, mocks, fixtures
+├── fixtures/              # Test data (valid/invalid manifests)
+├── unit/                  # Unit tests for lib/*.sh
+│   ├── config.bats        # Configuration loading tests
+│   ├── validate.bats      # Manifest validation tests
+│   └── cli.bats           # CLI dispatch tests
+└── e2e/                   # End-to-end tests
+    ├── pipeline.bats      # Full pipeline flow tests
+    └── deps.bats          # Dependency checking tests
+```
+
+## Documentation
+
+- [Quick Start Guide](docs/QUICKSTART.md) — Step-by-step guide to using reqdrive
+- [Test README](tests/README.md) — Detailed testing documentation
+
+## Development
+
+### Project Structure
+
+```
+reqdrive/
+├── bin/reqdrive           # CLI entry point
+├── lib/                   # Core scripts
+│   ├── config.sh          # Configuration loading
+│   ├── orchestrate.sh     # Pipeline orchestrator
+│   ├── run-single-req.sh  # Single requirement pipeline
+│   ├── agent-run.sh       # Agent execution loop
+│   ├── verify.sh          # Verification orchestration
+│   ├── pr-create.sh       # PR creation
+│   ├── worktree.sh        # Git worktree management
+│   ├── validate.sh        # Manifest validation
+│   ├── init.sh            # Interactive setup
+│   └── ...
+├── skills/                # Claude Code skills
+│   ├── design-to-prd/     # Convert designs to PRDs
+│   ├── prd/               # Generate PRDs
+│   └── verification-workflow/
+├── templates/             # Template files
+└── tests/                 # Test suite
+```
+
+### Known Limitations
+
+- **Windows:** Requires Git Bash or WSL2; native Windows is not supported
+- **Interactive mode:** Requires terminal for permission prompts
+- **No resume:** If pipeline crashes, must restart from scratch
+- **No timeouts:** Agent/verification can hang indefinitely
 
 ## License
 

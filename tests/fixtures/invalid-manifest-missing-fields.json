@@ -1,0 +1,8 @@
+{
+  "project": {
+    "name": "test-project"
+  },
+  "paths": {
+    "agentDir": ".reqdrive/agent"
+  }
+}

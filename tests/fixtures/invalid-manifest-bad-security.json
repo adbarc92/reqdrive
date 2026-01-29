@@ -1,0 +1,13 @@
+{
+  "project": {
+    "name": "test-project",
+    "title": "Test Project"
+  },
+  "paths": {
+    "requirementsDir": "docs/requirements",
+    "agentDir": ".reqdrive/agent"
+  },
+  "security": {
+    "mode": "invalid-mode"
+  }
+}
