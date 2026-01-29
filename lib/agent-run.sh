@@ -68,9 +68,10 @@ run_agent() {
     local claude_status=0
 
     # Use run_with_timeout from errors.sh
+    # Note: </dev/null prevents stdin from being passed through
     # shellcheck disable=SC2086
     output=$(run_with_timeout "$timeout_secs" \
-      claude $security_args --model "$model" -p "$prompt_content" 2>&1) || claude_status=$?
+      claude $security_args --model "$model" -p "$prompt_content" </dev/null 2>&1) || claude_status=$?
 
     # Handle timeout
     if [ "$claude_status" -eq 124 ] || [ "$claude_status" -eq 137 ]; then

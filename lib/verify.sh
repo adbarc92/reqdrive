@@ -102,9 +102,10 @@ PROMPT
   local output=""
   local claude_status=0
 
+  # Note: </dev/null prevents stdin from being passed through
   # shellcheck disable=SC2086
   output=$(run_with_timeout "$timeout_secs" \
-    claude $security_args --model "$model" -p "$prompt" 2>&1) || claude_status=$?
+    claude $security_args --model "$model" -p "$prompt" </dev/null 2>&1) || claude_status=$?
 
   # Save verification report regardless of outcome
   {
