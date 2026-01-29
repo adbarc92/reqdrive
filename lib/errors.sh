@@ -55,7 +55,7 @@ ERR_AGENT_TIMEOUT=41 # Agent timed out
 ERR_VERIFY=50        # Verification failed
 ERR_PR=60            # PR creation failed
 ERR_CLAUDE=70        # Claude CLI error
-ERR_CLAUDE_TIMEOUT=71# Claude timed out
+ERR_CLAUDE_TIMEOUT=71  # Claude timed out
 ERR_UNKNOWN=99       # Unknown error
 
 error_name() {
