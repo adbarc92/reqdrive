@@ -18,8 +18,13 @@ generate_prd() {
   local project_title="$REQDRIVE_PROJECT_TITLE"
   local context_file="$REQDRIVE_PATHS_CONTEXT_FILE"
 
+  # Get security arguments for PRD generation stage
+  local security_args
+  security_args=$(reqdrive_claude_security_args prd)
+
   # Use Claude Code with the design-to-prd skill to generate prd.json
-  claude --dangerously-skip-permissions --model "$model" -p "$(cat <<PROMPT
+  # shellcheck disable=SC2086
+  claude $security_args --model "$model" -p "$(cat <<PROMPT
 Load the design-to-prd skill. Then process the requirements document at:
 $req_file
 

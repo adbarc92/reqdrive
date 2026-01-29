@@ -57,7 +57,12 @@ run_verification() {
     test_gen_prompt="Generate new unit tests for code changed by the agent and run them."
   fi
 
-  VERIFY_OUTPUT=$(claude --dangerously-skip-permissions --model "$model" -p "$(cat <<PROMPT
+  # Get security arguments for verification stage
+  local security_args
+  security_args=$(reqdrive_claude_security_args verify)
+
+  # shellcheck disable=SC2086
+  VERIFY_OUTPUT=$(claude $security_args --model "$model" -p "$(cat <<PROMPT
 Run verification against this project.
 
 The PRD is at: $prd_file

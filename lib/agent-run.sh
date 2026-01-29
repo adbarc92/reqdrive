@@ -23,6 +23,10 @@ run_agent() {
 
   cd "$worktree_path"
 
+  # Get security arguments for agent stage
+  local security_args
+  security_args=$(reqdrive_claude_security_args agent)
+
   for i in $(seq 1 "$max_iterations"); do
     echo ""
     echo "  ═══════════════════════════════════════════════════════"
@@ -35,8 +39,9 @@ run_agent() {
     echo "  Stories remaining: $remaining"
 
     # Run Claude Code with the agent prompt
+    # shellcheck disable=SC2086
     OUTPUT=$(cat "$prompt_file" | claude \
-      --dangerously-skip-permissions \
+      $security_args \
       --model "$model" \
       -p 2>&1 | tee /dev/stderr) || true
 

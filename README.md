@@ -189,6 +189,43 @@ The `{branch}` placeholder in `setupSteps` is replaced with the actual branch na
 }
 ```
 
+### `security`
+
+```json
+{
+  "security": {
+    "mode": "interactive",
+    "allowedTools": []
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `mode` | Permission mode for Claude Code invocations (see below) |
+| `allowedTools` | Tool allowlist when using `allowlist` mode |
+
+**Security Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `interactive` | **Default. Recommended.** Claude Code prompts for permission on each action. Requires terminal interaction. |
+| `allowlist` | Restricts Claude to tools listed in `allowedTools`. Use for CI/CD with controlled permissions. |
+| `dangerous` | Skips all permission checks. **Use only in fully isolated environments (containers, VMs).** |
+
+**⚠️ Security Warning:** The `dangerous` mode grants the AI agent unrestricted system access. Only use it in sandboxed environments where the agent cannot access sensitive data, credentials, or network resources. For most use cases, `interactive` mode provides the best balance of usability and security.
+
+**Example allowlist configuration for CI:**
+
+```json
+{
+  "security": {
+    "mode": "allowlist",
+    "allowedTools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+  }
+}
+```
+
 ## Project Layout
 
 After setup, your project will have:

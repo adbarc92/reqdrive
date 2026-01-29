@@ -84,6 +84,12 @@ reqdrive_load_config() {
   export REQDRIVE_VERIFY_MAX_RETRIES
   REQDRIVE_VERIFY_MAX_RETRIES="$(jq -r '.verification.maxRetries // 3' "$M")"
 
+  # Security
+  export REQDRIVE_SECURITY_MODE
+  REQDRIVE_SECURITY_MODE="$(jq -r '.security.mode // "interactive"' "$M")"
+  export REQDRIVE_SECURITY_ALLOW_TOOLS
+  REQDRIVE_SECURITY_ALLOW_TOOLS="$(jq -r '.security.allowedTools // [] | join(",")' "$M")"
+
   # Requirements
   export REQDRIVE_REQ_PATTERN
   REQDRIVE_REQ_PATTERN="$(jq -r '.requirements.pattern // "REQ-*-*.md"' "$M")"
@@ -136,6 +142,32 @@ reqdrive_expand_template() {
   result="${result//\{project\}/$REQDRIVE_PROJECT_NAME}"
   result="${result//\{title\}/$REQDRIVE_PROJECT_TITLE}"
   echo "$result"
+}
+
+# Build Claude CLI security arguments based on security mode
+# Returns the appropriate flags for the given stage
+reqdrive_claude_security_args() {
+  local stage="${1:-agent}"  # agent, prd, or verify
+
+  case "$REQDRIVE_SECURITY_MODE" in
+    dangerous)
+      # User explicitly opted into dangerous mode with full awareness
+      echo "--dangerously-skip-permissions"
+      ;;
+    allowlist)
+      # Use allowedTools if configured
+      if [ -n "$REQDRIVE_SECURITY_ALLOW_TOOLS" ]; then
+        echo "--allowedTools $REQDRIVE_SECURITY_ALLOW_TOOLS"
+      else
+        # No allowlist configured, fall back to interactive
+        echo ""
+      fi
+      ;;
+    interactive|*)
+      # Default: no special flags, Claude Code will prompt for permissions
+      echo ""
+      ;;
+  esac
 }
 
 # Portable timestamp (works on both GNU and BSD date)

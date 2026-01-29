@@ -26,8 +26,23 @@ echo "  reqdrive pipeline"
 echo "  Project: $REQDRIVE_PROJECT_TITLE"
 echo "  Run ID: $RUN_ID"
 echo "  Max parallel worktrees: $MAX_PARALLEL"
+echo "  Security mode: $REQDRIVE_SECURITY_MODE"
 echo "═══════════════════════════════════════════════════════════"
-echo ""
+
+# Security mode warnings
+if [ "$REQDRIVE_SECURITY_MODE" = "dangerous" ]; then
+  echo ""
+  echo "  ⚠️  WARNING: Running in DANGEROUS mode"
+  echo "  ⚠️  The AI agent has unrestricted system access."
+  echo "  ⚠️  Only use in fully isolated/sandboxed environments."
+  echo ""
+  sleep 2
+elif [ "$REQDRIVE_SECURITY_MODE" = "interactive" ]; then
+  echo ""
+  echo "  ℹ️  Interactive mode: Claude will prompt for permissions."
+  echo "  ℹ️  This requires terminal interaction for each action."
+  echo ""
+fi
 
 # ── Determine which REQs to process ──────────────────────────────────
 

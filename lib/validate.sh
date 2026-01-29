@@ -145,6 +145,29 @@ else
   echo "  ✓ $CHECK_COUNT verification checks defined"
 fi
 
+# ── Security configuration ──────────────────────────────────────────
+echo ""
+echo "Security:"
+SEC_MODE=$(jq -r '.security.mode // "interactive"' "$M")
+VALID_MODES="interactive allowlist dangerous"
+if echo "$VALID_MODES" | grep -qw "$SEC_MODE"; then
+  if [ "$SEC_MODE" = "dangerous" ]; then
+    echo "  ⚠️  mode: $SEC_MODE (UNRESTRICTED - use only in sandboxed environments)"
+  elif [ "$SEC_MODE" = "allowlist" ]; then
+    TOOL_COUNT=$(jq '.security.allowedTools // [] | length' "$M")
+    if [ "$TOOL_COUNT" -eq 0 ]; then
+      echo "  WARN: mode=allowlist but no allowedTools defined (will fall back to interactive)"
+    else
+      echo "  ✓ mode: $SEC_MODE ($TOOL_COUNT tools allowed)"
+    fi
+  else
+    echo "  ✓ mode: $SEC_MODE (recommended)"
+  fi
+else
+  echo "  FAIL: Invalid security.mode: $SEC_MODE (valid: interactive, allowlist, dangerous)"
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────
 echo ""
 echo "─────────────────────────────────────"

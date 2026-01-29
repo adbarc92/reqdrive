@@ -51,5 +51,9 @@
     "worktreeRoot": "../worktrees",
     "baseBranch": "main",
     "stateDir": ".reqdrive/state"
+  },
+  "security": {
+    "mode": "interactive",
+    "allowedTools": []
   }
 }
