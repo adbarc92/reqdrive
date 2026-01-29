@@ -80,9 +80,8 @@ PROMPT
   local output=""
   local claude_status=0
 
+  # Note: </dev/null prevents stdin from being passed through
   # shellcheck disable=SC2086
-  # Note: </dev/null prevents stdin from being passed through, avoiding
-  # spurious input when running in subshell/timeout context
   output=$(run_with_timeout "$timeout_secs" \
     claude $security_args --model "$model" -p "$prompt" </dev/null 2>&1) || claude_status=$?
 
