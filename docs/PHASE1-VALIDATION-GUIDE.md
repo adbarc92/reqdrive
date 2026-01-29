@@ -204,6 +204,18 @@ cat > reqdrive.json << 'EOF'
 }
 EOF
 
+# IMPORTANT: Security Mode Explanation
+# ====================================
+# "dangerous" mode is REQUIRED for automated/scripted reqdrive usage.
+#
+# When running in "interactive" mode, Claude prompts for permission before
+# writing files. Since reqdrive redirects stdin to /dev/null (to prevent
+# spurious input), Claude cannot receive permission responses, causing
+# silent failures where Claude runs but creates no output files.
+#
+# Only use "dangerous" mode in isolated test environments, never on
+# production codebases without careful review.
+
 # Copy agent prompt template
 cp "$REQDRIVE_ROOT/templates/prompt.md.tpl" .reqdrive/agent/prompt.md
 
