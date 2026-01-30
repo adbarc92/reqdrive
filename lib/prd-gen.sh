@@ -74,32 +74,18 @@ Rules:
 PROMPT
   )
 
-  # Run Claude with timeout
-  log_debug "  Running Claude for PRD generation (timeout: ${timeout_secs}s)"
+  # Run Claude with prompt piped via stdin (Ralph pattern)
+  log_info "  Running Claude for PRD generation..."
 
   local output=""
-  local claude_status=0
 
-  # Note: </dev/null prevents stdin from being passed through
+  # Pipe prompt to Claude, show output in real-time with tee
   # shellcheck disable=SC2086
-  output=$(run_with_timeout "$timeout_secs" \
-    claude $security_args --model "$model" -p "$prompt" </dev/null 2>&1) || claude_status=$?
+  output=$(echo "$prompt" | timeout "$timeout_secs" \
+    claude $security_args --model "$model" 2>&1 | tee /dev/stderr) || true
 
-  # Save output for debugging regardless of outcome
+  # Save output for debugging
   echo "$output" > "$agent_dir/prd-gen.log"
-
-  # Handle timeout
-  if [ "$claude_status" -eq 124 ] || [ "$claude_status" -eq 137 ]; then
-    log_error "  PRD generation timed out after ${timeout_secs}s"
-    return $ERR_CLAUDE_TIMEOUT
-  fi
-
-  # Handle other Claude errors
-  if [ "$claude_status" -ne 0 ]; then
-    log_error "  Claude failed with status $claude_status"
-    log_debug "  Output: $(echo "$output" | tail -10)"
-    return $ERR_CLAUDE
-  fi
 
   # Verify prd.json was created
   if [ ! -f "$prd_file" ]; then
