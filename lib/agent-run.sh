@@ -61,43 +61,17 @@ run_agent() {
     # - Pipe prompt file to Claude instead of -p flag (avoids quoting issues)
     # - Use tee to show output in real-time while capturing
     # - Use || true to continue loop even if Claude exits non-zero
-    log_debug "  Running Claude (timeout: ${timeout_secs}s)"
+    log_info "  Running Claude..."
 
     local output=""
     local claude_status=0
 
     # shellcheck disable=SC2086
-    output=$(cat "$prompt_file" | run_with_timeout "$timeout_secs" \
-      claude $security_args --model "$model" 2>&1 | tee /dev/stderr) || claude_status=$?
+    # Use || true to ensure loop continues regardless of Claude exit status
+    output=$(cat "$prompt_file" | timeout "$timeout_secs" \
+      claude $security_args --model "$model" 2>&1 | tee /dev/stderr) || true
 
-    # Handle timeout
-    if [ "$claude_status" -eq 124 ] || [ "$claude_status" -eq 137 ]; then
-      log_error "  Agent iteration $i timed out after ${timeout_secs}s"
-
-      # Save timeout state for debugging
-      echo "$output" > "$agent_dir/iteration-$i-timeout.log"
-
-      # Continue to next iteration or exit based on policy
-      if [ "$i" -eq "$max_iterations" ]; then
-        return $ERR_AGENT_TIMEOUT
-      fi
-      continue
-    fi
-
-    # Handle other Claude errors
-    if [ "$claude_status" -ne 0 ]; then
-      log_warn "  Claude exited with status $claude_status"
-      echo "$output" > "$agent_dir/iteration-$i-error.log"
-
-      # Don't fail immediately - agent may have made partial progress
-    fi
-
-    # Log output for debugging (truncated)
-    local output_preview
-    output_preview=$(echo "$output" | tail -20)
-    log_debug "  Output preview: $output_preview"
-
-    # Save full output
+    # Save iteration output for later review
     echo "$output" > "$agent_dir/iteration-$i.log"
 
     # Check for completion signal
