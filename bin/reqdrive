@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# reqdrive — Requirements-driven development pipeline
-# Dispatches subcommands to lib/ scripts.
+# reqdrive - Requirements-driven development pipeline
+# Simple CLI for running requirements through an AI agent to PRs
 
 set -euo pipefail
 
 REQDRIVE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export REQDRIVE_ROOT
 
+VERSION="0.2.0"
+
 # ── Dependency check ──────────────────────────────────────────────────
+
 check_tool() {
   if ! command -v "$1" &>/dev/null; then
-    echo "ERROR: Required tool '$1' not found. Please install it." >&2
+    echo "ERROR: Required tool '$1' not found." >&2
     exit 1
   fi
 }
@@ -19,71 +22,71 @@ for tool in jq git gh claude; do
   check_tool "$tool"
 done
 
-# ── Source config loader ──────────────────────────────────────────────
-source "$REQDRIVE_ROOT/lib/config.sh"
-
 # ── Usage ─────────────────────────────────────────────────────────────
+
 usage() {
   cat <<'EOF'
-reqdrive — Requirements-driven development pipeline
+reqdrive - Requirements to Pull Requests via AI
 
 Usage:
-  reqdrive init                    Scaffold manifest + agent prompt
-  reqdrive run REQ-01 REQ-03       Run specific requirements
-  reqdrive run --all               Run all (respecting deps)
-  reqdrive run --next              Auto-detect next available
-  reqdrive status [run-id]         Show run status
-  reqdrive clean                   Remove worktrees
-  reqdrive validate                Validate manifest
-  reqdrive deps                    Print dependency graph
+  reqdrive init              Create reqdrive.json config
+  reqdrive run <REQ-ID>      Run pipeline for a requirement
+  reqdrive validate          Validate config
+
+Examples:
+  reqdrive init
+  reqdrive run REQ-01
+  reqdrive run req-02
 
 Options:
-  -h, --help                       Show this help
-  -v, --version                    Show version
+  -h, --help     Show this help
+  -v, --version  Show version
 
 Prerequisites: bash, jq, git, gh, claude
 EOF
 }
 
-VERSION="0.1.0"
+# ── Commands ──────────────────────────────────────────────────────────
 
-# ── Dispatch ──────────────────────────────────────────────────────────
-_reqdrive_cmd="${1:-}"
-shift || true
-
-# Save positional params for sourced scripts
-_reqdrive_args=("$@")
-
-_reqdrive_dispatch() {
-  local script="$1"
-  # Set positional params for the sourced script
-  set -- "${_reqdrive_args[@]}"
-  source "$REQDRIVE_ROOT/lib/$script"
+cmd_init() {
+  source "$REQDRIVE_ROOT/lib/init.sh"
 }
 
-case "$_reqdrive_cmd" in
+cmd_run() {
+  local req_id="${1:-}"
+
+  if [ -z "$req_id" ]; then
+    echo "Usage: reqdrive run <REQ-ID>" >&2
+    echo "Example: reqdrive run REQ-01" >&2
+    exit 1
+  fi
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  source "$REQDRIVE_ROOT/lib/run.sh"
+  run_pipeline "$req_id"
+}
+
+cmd_validate() {
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  source "$REQDRIVE_ROOT/lib/validate.sh"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────
+
+case "${1:-}" in
   init)
-    _reqdrive_dispatch "init.sh"
+    cmd_init
     ;;
   run)
-    reqdrive_load_config
-    _reqdrive_dispatch "orchestrate.sh"
-    ;;
-  status)
-    reqdrive_load_config
-    _reqdrive_dispatch "status.sh"
-    ;;
-  clean)
-    reqdrive_load_config
-    _reqdrive_dispatch "clean.sh"
+    shift
+    cmd_run "$@"
     ;;
   validate)
-    reqdrive_load_config_path
-    _reqdrive_dispatch "validate.sh"
-    ;;
-  deps)
-    reqdrive_load_config
-    _reqdrive_dispatch "deps.sh"
+    cmd_validate
     ;;
   -v|--version)
     echo "reqdrive $VERSION"
@@ -92,7 +95,7 @@ case "$_reqdrive_cmd" in
     usage
     ;;
   *)
-    echo "Unknown command: $_reqdrive_cmd" >&2
+    echo "Unknown command: $1" >&2
     echo "Run 'reqdrive --help' for usage." >&2
     exit 1
     ;;

@@ -1,0 +1,9 @@
+{
+  "requirementsDir": "docs/requirements",
+  "testCommand": "npm test",
+  "model": "claude-sonnet-4-20250514",
+  "maxIterations": 10,
+  "baseBranch": "main",
+  "prLabels": ["agent-generated"],
+  "projectName": "My Project"
+}
