@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # pr-create.sh - Create a PR with validation checklist from PRD
 
+# Source sanitize if not already loaded
+if ! type sanitize_label &>/dev/null; then
+  source "${REQDRIVE_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/sanitize.sh"
+fi
+
 create_pr() {
   local project_root="$1"
   local req="$2"
@@ -45,29 +50,42 @@ create_pr() {
   local commits
   commits=$(git log --oneline "$base_branch".."$branch" 2>/dev/null || echo "No commits found")
 
-  # Build label flags
-  local label_flags=""
-  if [ -n "$REQDRIVE_PR_LABELS" ]; then
-    IFS=',' read -ra labels <<< "$REQDRIVE_PR_LABELS"
-    for label in "${labels[@]}"; do
-      label_flags+=" --label $label"
+  # Build label flags with proper sanitization
+  local labels=()
+
+  if [ -n "${REQDRIVE_PR_LABELS:-}" ]; then
+    IFS=',' read -ra config_labels <<< "$REQDRIVE_PR_LABELS"
+    for label in "${config_labels[@]}"; do
+      local sanitized
+      sanitized=$(sanitize_label "$label")
+      if [ -n "$sanitized" ]; then
+        labels+=("$sanitized")
+      fi
     done
   fi
 
-  # Add REQ-specific label
+  # Add REQ-specific label (sanitized)
   local req_label
   req_label=$(echo "$req" | tr '[:upper:]' '[:lower:]')
-  label_flags+=" --label $req_label"
+  req_label=$(sanitize_label "$req_label")
+  if [ -n "$req_label" ]; then
+    labels+=("$req_label")
+  fi
+
+  # Build label arguments - each label properly quoted
+  local label_args=()
+  for label in "${labels[@]}"; do
+    label_args+=("--label" "$label")
+  done
 
   # Create PR
   echo "  Creating PR..."
 
-  # shellcheck disable=SC2086
   gh pr create \
     $draft_flag \
     --base "$base_branch" \
     --head "$branch" \
-    $label_flags \
+    "${label_args[@]}" \
     --title "$project" \
     --body "$(cat <<EOF
 ## Summary

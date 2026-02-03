@@ -4,30 +4,106 @@
 
 set -e
 
-# ── Logging ──────────────────────────────────────────────────────────────
+# Source dependencies
+source "$REQDRIVE_ROOT/lib/errors.sh"
+source "$REQDRIVE_ROOT/lib/sanitize.sh"
+source "$REQDRIVE_ROOT/lib/preflight.sh"
+
+# ── Logging ──────────────────────────────────────────────────────────────────
 
 log_info() { echo "[INFO]  $(date +%H:%M:%S) $*" >&2; }
 log_warn() { echo "[WARN]  $(date +%H:%M:%S) $*" >&2; }
 log_error() { echo "[ERROR] $(date +%H:%M:%S) $*" >&2; }
 
-# ── Main Pipeline ────────────────────────────────────────────────────────
+# ── Checkpoint Management ────────────────────────────────────────────────────
+
+save_checkpoint() {
+  local agent_dir="$1"
+  local req_id="$2"
+  local branch="$3"
+  local iteration="$4"
+  local prd_file="$5"
+
+  local checkpoint_file="$agent_dir/checkpoint.json"
+  local prd_exists="false"
+  local stories_complete="[]"
+
+  if [ -f "$prd_file" ]; then
+    prd_exists="true"
+    stories_complete=$(jq '[.userStories[] | select(.passes == true) | .id]' "$prd_file" 2>/dev/null || echo "[]")
+  fi
+
+  cat > "$checkpoint_file" <<EOF
+{
+  "req_id": "$req_id",
+  "branch": "$branch",
+  "iteration": $iteration,
+  "timestamp": "$(date -Iseconds)",
+  "prd_exists": $prd_exists,
+  "stories_complete": $stories_complete
+}
+EOF
+
+  log_info "Checkpoint saved: iteration $iteration"
+}
+
+load_checkpoint() {
+  local agent_dir="$1"
+  local req_id="$2"
+
+  local checkpoint_file="$agent_dir/checkpoint.json"
+
+  if [ ! -f "$checkpoint_file" ]; then
+    echo ""
+    return 0
+  fi
+
+  # Verify checkpoint is for the right requirement
+  local checkpoint_req
+  checkpoint_req=$(jq -r '.req_id' "$checkpoint_file" 2>/dev/null || echo "")
+
+  if [ "$checkpoint_req" != "$req_id" ]; then
+    log_warn "Checkpoint is for different requirement ($checkpoint_req), ignoring"
+    echo ""
+    return 0
+  fi
+
+  echo "$checkpoint_file"
+}
+
+# ── Main Pipeline ────────────────────────────────────────────────────────────
 
 run_pipeline() {
   local req_id="$1"
 
   if [ -z "$req_id" ]; then
     echo "Usage: reqdrive run <REQ-ID>" >&2
-    exit 1
+    exit "$EXIT_GENERAL_ERROR"
   fi
 
   # Normalize to uppercase
   req_id=$(echo "$req_id" | tr '[:lower:]' '[:upper:]')
-  local req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
+  local req_slug
+  req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
 
   log_info "Starting pipeline for $req_id"
 
-  # ── Find requirement file ──
+  # ── Setup paths ──
   local req_dir="$REQDRIVE_PROJECT_ROOT/$REQDRIVE_REQUIREMENTS_DIR"
+  local branch="reqdrive/$req_slug"
+  local base_branch="${REQDRIVE_BASE_BRANCH:-main}"
+  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/agent"
+
+  # ── Run pre-flight checks ──
+  if [ "${REQDRIVE_FORCE:-false}" = "true" ]; then
+    log_warn "Skipping pre-flight checks (--force flag used)"
+  else
+    if ! run_preflight_checks "$base_branch" "$req_dir" "$req_id" "$branch"; then
+      exit "$EXIT_PREFLIGHT_FAILED"
+    fi
+  fi
+
+  # ── Find requirement file ──
   local req_file=""
 
   for f in "$req_dir/${req_id}"*.md "$req_dir/${req_slug}"*.md; do
@@ -39,16 +115,49 @@ run_pipeline() {
 
   if [ -z "$req_file" ]; then
     log_error "No requirement file found matching ${req_id}*.md in $req_dir"
-    exit 1
+    exit "$EXIT_CONFIG_ERROR"
   fi
 
   log_info "Requirement: $req_file"
 
-  # ── Setup branch ──
-  local branch="reqdrive/$req_slug"
-  local base_branch="${REQDRIVE_BASE_BRANCH:-main}"
+  # ── Validate requirement content ──
+  local requirement_content
+  requirement_content=$(cat "$req_file")
 
-  # Check if branch exists
+  if ! validate_requirement_content "$requirement_content"; then
+    if [ "${REQDRIVE_FORCE:-false}" != "true" ]; then
+      exit "$EXIT_PREFLIGHT_FAILED"
+    fi
+    log_warn "Continuing despite suspicious content (--force flag used)"
+  fi
+
+  # ── Check for resume ──
+  mkdir -p "$agent_dir"
+  local start_iteration=1
+  local checkpoint_file=""
+
+  if [ "${REQDRIVE_RESUME:-false}" = "true" ]; then
+    checkpoint_file=$(load_checkpoint "$agent_dir" "$req_id")
+    if [ -n "$checkpoint_file" ]; then
+      local checkpoint_iteration
+      checkpoint_iteration=$(jq -r '.iteration' "$checkpoint_file")
+      local checkpoint_branch
+      checkpoint_branch=$(jq -r '.branch' "$checkpoint_file")
+      local checkpoint_time
+      checkpoint_time=$(jq -r '.timestamp' "$checkpoint_file")
+
+      log_info "Found checkpoint from $checkpoint_time"
+      log_info "  Branch: $checkpoint_branch"
+      log_info "  Last completed iteration: $checkpoint_iteration"
+
+      start_iteration=$((checkpoint_iteration + 1))
+      branch="$checkpoint_branch"
+    else
+      log_info "No checkpoint found, starting fresh"
+    fi
+  fi
+
+  # ── Setup branch ──
   if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
     log_info "Switching to existing branch: $branch"
     git checkout "$branch"
@@ -57,11 +166,7 @@ run_pipeline() {
     git checkout -b "$branch" "$base_branch"
   fi
 
-  # ── Setup agent directory ──
-  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/agent"
-  mkdir -p "$agent_dir"
-
-  # ── Build prompt with embedded requirement ──
+  # ── Setup agent files ──
   local prompt_file="$agent_dir/prompt.md"
   local progress_file="$agent_dir/progress.txt"
   local prd_file="$agent_dir/prd.json"
@@ -75,9 +180,10 @@ Started: $(date)
 EOF
   fi
 
-  # Build the prompt
-  local requirement_content
-  requirement_content=$(cat "$req_file")
+  # ── Build the prompt ──
+  # Sanitize the requirement content before embedding
+  local sanitized_content
+  sanitized_content=$(sanitize_for_prompt "$requirement_content")
 
   cat > "$prompt_file" <<'PROMPT_START'
 # Agent Instructions
@@ -157,8 +263,8 @@ If more remain: end normally (next iteration continues)
 
 PROMPT_START
 
-  # Append the actual requirement content
-  echo "$requirement_content" >> "$prompt_file"
+  # Append the sanitized requirement content
+  echo "$sanitized_content" >> "$prompt_file"
 
   log_info "Prompt built at $prompt_file"
 
@@ -167,10 +273,11 @@ PROMPT_START
   local model="${REQDRIVE_MODEL:-claude-sonnet-4-20250514}"
   local completion_signal="<promise>COMPLETE</promise>"
 
-  log_info "Starting agent loop (max $max_iterations iterations)"
+  log_info "Starting agent loop (max $max_iterations iterations, starting at $start_iteration)"
   log_info "Model: $model"
+  log_info "Mode: ${REQDRIVE_INTERACTIVE:-true} (interactive)"
 
-  for i in $(seq 1 "$max_iterations"); do
+  for i in $(seq "$start_iteration" "$max_iterations"); do
     echo ""
     log_info "═══════════════════════════════════════════════════════"
     log_info "  Iteration $i of $max_iterations"
@@ -188,18 +295,39 @@ PROMPT_START
       fi
     fi
 
+    # Build claude command based on mode
+    local claude_cmd="claude --model $model"
+
+    if [ "${REQDRIVE_INTERACTIVE:-true}" = "false" ]; then
+      claude_cmd="$claude_cmd --dangerously-skip-permissions"
+    fi
+
     # Run Claude with prompt piped via stdin
     local output=""
     local tmpout="$agent_dir/.output-$i.tmp"
 
-    cat "$prompt_file" | timeout 1800 \
-      claude --dangerously-skip-permissions --model "$model" 2>&1 | tee "$tmpout" || true
+    log_info "Running claude ($([ "${REQDRIVE_INTERACTIVE:-true}" = "true" ] && echo "interactive" || echo "unsafe") mode)..."
+
+    # Execute claude
+    if cat "$prompt_file" | timeout 1800 $claude_cmd 2>&1 | tee "$tmpout"; then
+      : # Success
+    else
+      local exit_code=$?
+      if [ $exit_code -eq 124 ]; then
+        log_error "Claude timed out after 30 minutes"
+      elif [ $exit_code -ne 0 ]; then
+        log_warn "Claude exited with code $exit_code"
+      fi
+    fi
 
     output=$(cat "$tmpout" 2>/dev/null || echo "")
 
     # Save iteration log
     echo "$output" > "$agent_dir/iteration-$i.log"
     rm -f "$tmpout"
+
+    # Save checkpoint
+    save_checkpoint "$agent_dir" "$req_id" "$branch" "$i" "$prd_file"
 
     # Check for completion
     if echo "$output" | grep -qF "$completion_signal"; then
@@ -238,8 +366,10 @@ PROMPT_START
     log_info "PR created successfully"
   else
     log_warn "PR creation failed. Branch available at: $branch"
+    exit "$EXIT_PR_ERROR"
   fi
 
   log_info ""
   log_info "Pipeline complete for $req_id"
+  exit "$EXIT_SUCCESS"
 }

@@ -8,6 +8,39 @@ REQDRIVE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export TEST_FIXTURES
 TEST_FIXTURES="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/fixtures"
 
+# ── Dependency Checks ────────────────────────────────────────────────────────
+
+# Check if claude binary is available
+has_claude() {
+  command -v claude &>/dev/null
+}
+
+# Skip a test if claude is not available
+# Usage: skip_without_claude || return
+skip_without_claude() {
+  if ! has_claude; then
+    echo "SKIP: claude binary not available"
+    return 1
+  fi
+  return 0
+}
+
+# Check if gh CLI is available
+has_gh() {
+  command -v gh &>/dev/null
+}
+
+# Skip a test if gh is not available
+skip_without_gh() {
+  if ! has_gh; then
+    echo "SKIP: gh CLI not available"
+    return 1
+  fi
+  return 0
+}
+
+# ── Test Environment Setup ───────────────────────────────────────────────────
+
 # Create a temporary directory for test isolation
 setup_temp_dir() {
   export TEST_TEMP_DIR
@@ -111,6 +144,8 @@ fi
 EOF
   chmod +x "$TEST_TEMP_DIR/bin/gh"
 }
+
+# ── Assertions ───────────────────────────────────────────────────────────────
 
 # Assert a file contains a string
 assert_file_contains() {

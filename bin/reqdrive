@@ -9,20 +9,35 @@ export REQDRIVE_ROOT
 
 VERSION="0.2.0"
 
-# ── Dependency check ──────────────────────────────────────────────────
+# Source error codes
+source "$REQDRIVE_ROOT/lib/errors.sh"
+
+# ── Dependency check ──────────────────────────────────────────────────────────
 
 check_tool() {
   if ! command -v "$1" &>/dev/null; then
     echo "ERROR: Required tool '$1' not found." >&2
-    exit 1
+    exit "$EXIT_MISSING_DEPENDENCY"
   fi
 }
 
-for tool in jq git gh claude; do
+# Check tools that are always required
+for tool in jq git gh; do
   check_tool "$tool"
 done
 
-# ── Usage ─────────────────────────────────────────────────────────────
+# Check claude only when needed (deferred to run command)
+check_claude() {
+  if ! command -v claude &>/dev/null; then
+    echo "ERROR: Required tool 'claude' not found." >&2
+    echo "" >&2
+    echo "The 'claude' CLI is required to run the agent pipeline." >&2
+    echo "Install it from: https://github.com/anthropics/claude-code" >&2
+    exit "$EXIT_MISSING_DEPENDENCY"
+  fi
+}
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
 
 usage() {
   cat <<'EOF'
@@ -33,10 +48,17 @@ Usage:
   reqdrive run <REQ-ID>      Run pipeline for a requirement
   reqdrive validate          Validate config
 
+Run Options:
+  -i, --interactive          Run in interactive mode (default, safer)
+  --unsafe                   Skip permission prompts (use with caution)
+  --force                    Skip pre-flight checks (not recommended)
+  --resume                   Resume from last checkpoint
+
 Examples:
   reqdrive init
   reqdrive run REQ-01
-  reqdrive run req-02
+  reqdrive run REQ-01 --unsafe    # Non-interactive mode
+  reqdrive run REQ-01 --resume    # Resume interrupted run
 
 Options:
   -h, --help     Show this help
@@ -46,19 +68,93 @@ Prerequisites: bash, jq, git, gh, claude
 EOF
 }
 
-# ── Commands ──────────────────────────────────────────────────────────
+# ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_init() {
   source "$REQDRIVE_ROOT/lib/init.sh"
 }
 
 cmd_run() {
-  local req_id="${1:-}"
+  # Check for claude binary (only needed for run command)
+  check_claude
+
+  # Parse arguments
+  local req_id=""
+  export REQDRIVE_INTERACTIVE="true"
+  export REQDRIVE_FORCE="false"
+  export REQDRIVE_RESUME="false"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -i|--interactive)
+        REQDRIVE_INTERACTIVE="true"
+        shift
+        ;;
+      --unsafe|--dangerously-skip-permissions)
+        REQDRIVE_INTERACTIVE="false"
+        shift
+        ;;
+      --force)
+        REQDRIVE_FORCE="true"
+        shift
+        ;;
+      --resume)
+        REQDRIVE_RESUME="true"
+        shift
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        echo "Run 'reqdrive run --help' for usage." >&2
+        exit "$EXIT_GENERAL_ERROR"
+        ;;
+      *)
+        if [ -z "$req_id" ]; then
+          req_id="$1"
+        else
+          echo "Unexpected argument: $1" >&2
+          exit "$EXIT_GENERAL_ERROR"
+        fi
+        shift
+        ;;
+    esac
+  done
 
   if [ -z "$req_id" ]; then
-    echo "Usage: reqdrive run <REQ-ID>" >&2
+    echo "Usage: reqdrive run <REQ-ID> [options]" >&2
     echo "Example: reqdrive run REQ-01" >&2
-    exit 1
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  -i, --interactive  Run in interactive mode (default)" >&2
+    echo "  --unsafe           Skip permission prompts" >&2
+    echo "  --force            Skip pre-flight checks" >&2
+    echo "  --resume           Resume from checkpoint" >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  # Show warning for unsafe mode
+  if [ "$REQDRIVE_INTERACTIVE" = "false" ]; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║  WARNING: Running in UNSAFE mode (--dangerously-skip-permissions) ║"
+    echo "║                                                                   ║"
+    echo "║  The AI agent will have unrestricted access to:                   ║"
+    echo "║  - Execute any shell commands                                     ║"
+    echo "║  - Modify any files in the repository                             ║"
+    echo "║  - Make network requests                                          ║"
+    echo "║                                                                   ║"
+    echo "║  Only use this mode if you trust the requirement content.         ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # If running in a TTY, ask for confirmation
+    if [ -t 0 ]; then
+      read -p "Continue in unsafe mode? [y/N] " -n 1 -r
+      echo ""
+      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit "$EXIT_USER_ABORT"
+      fi
+    fi
   fi
 
   source "$REQDRIVE_ROOT/lib/config.sh"
@@ -75,7 +171,7 @@ cmd_validate() {
   source "$REQDRIVE_ROOT/lib/validate.sh"
 }
 
-# ── Dispatch ──────────────────────────────────────────────────────────
+# ── Dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
   init)
@@ -97,6 +193,6 @@ case "${1:-}" in
   *)
     echo "Unknown command: $1" >&2
     echo "Run 'reqdrive --help' for usage." >&2
-    exit 1
+    exit "$EXIT_GENERAL_ERROR"
     ;;
 esac
