@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for bin/reqdrive CLI dispatch
+# Unit tests for bin/reqdrive CLI dispatch (v0.2.0)
 
 # Load test helpers
 load '../test_helper/common'
@@ -28,7 +28,7 @@ teardown() {
   run bash "$REQDRIVE_ROOT/bin/reqdrive" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"reqdrive"* ]]
-  [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
+  [[ "$output" == *"0.2.0"* ]]
 }
 
 @test "reqdrive -v shows version" {
@@ -95,37 +95,13 @@ teardown() {
 # Command dispatch
 # ============================================================================
 
-@test "reqdrive validate dispatches to validate.sh" {
+@test "reqdrive validate dispatches correctly" {
   create_test_project "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
   [ "$status" -eq 0 ]
   [[ "$output" == *"Validating"* ]]
-}
-
-@test "reqdrive deps requires manifest" {
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" deps
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"No reqdrive.json"* ]]
-}
-
-@test "reqdrive status requires manifest" {
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" status
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"No reqdrive.json"* ]]
-}
-
-@test "reqdrive clean requires manifest" {
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" clean
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"No reqdrive.json"* ]]
 }
 
 @test "reqdrive run requires manifest" {
@@ -136,6 +112,15 @@ teardown() {
   [[ "$output" == *"No reqdrive.json"* ]]
 }
 
+@test "reqdrive run requires REQ-ID argument" {
+  create_test_project "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+
+  run bash "$REQDRIVE_ROOT/bin/reqdrive" run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Usage: reqdrive run"* ]]
+}
+
 # ============================================================================
 # Init command
 # ============================================================================
@@ -144,7 +129,7 @@ teardown() {
   cd "$TEST_TEMP_DIR"
 
   # Feed answers to interactive prompts
-  run bash -c "echo -e '\n\n\n\n\n\n\n\n\n\n\n\n' | bash '$REQDRIVE_ROOT/bin/reqdrive' init"
+  run bash -c "echo -e '\n\n\n\n' | bash '$REQDRIVE_ROOT/bin/reqdrive' init"
 
   # Should create reqdrive.json even if some prompts fail
   [ -f "$TEST_TEMP_DIR/reqdrive.json" ] || skip "init requires interactive input"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for lib/config.sh
+# Unit tests for lib/config.sh (v0.2.0)
 
 # Load test helpers
 load '../test_helper/common'
@@ -19,151 +19,152 @@ teardown() {
 }
 
 # ============================================================================
-# reqdrive_load_config_path tests
+# reqdrive_find_manifest tests
 # ============================================================================
 
-@test "reqdrive_load_config_path finds manifest in current directory" {
+@test "reqdrive_find_manifest finds manifest in current directory" {
   create_test_manifest "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
+  result=$(reqdrive_find_manifest)
 
-  [ -n "$REQDRIVE_MANIFEST" ]
-  [ -n "$REQDRIVE_PROJECT_ROOT" ]
-  [ "$REQDRIVE_MANIFEST" = "$TEST_TEMP_DIR/reqdrive.json" ]
+  [ "$result" = "$TEST_TEMP_DIR/reqdrive.json" ]
 }
 
-@test "reqdrive_load_config_path finds manifest in parent directory" {
+@test "reqdrive_find_manifest finds manifest in parent directory" {
   create_test_manifest "$TEST_TEMP_DIR"
   mkdir -p "$TEST_TEMP_DIR/subdir/nested"
   cd "$TEST_TEMP_DIR/subdir/nested"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
+  result=$(reqdrive_find_manifest)
 
-  [ "$REQDRIVE_MANIFEST" = "$TEST_TEMP_DIR/reqdrive.json" ]
-  [ "$REQDRIVE_PROJECT_ROOT" = "$TEST_TEMP_DIR" ]
+  [ "$result" = "$TEST_TEMP_DIR/reqdrive.json" ]
 }
 
-@test "reqdrive_load_config_path fails when no manifest exists" {
+@test "reqdrive_find_manifest fails when no manifest exists" {
   cd "$TEST_TEMP_DIR"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
-  run reqdrive_load_config_path
+  run reqdrive_find_manifest
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *"No reqdrive.json found"* ]]
 }
 
 # ============================================================================
 # reqdrive_load_config tests
 # ============================================================================
 
-@test "reqdrive_load_config loads project name and title" {
+@test "reqdrive_load_config sets REQDRIVE_MANIFEST and PROJECT_ROOT" {
   create_test_manifest "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
 
-  [ "$REQDRIVE_PROJECT_NAME" = "test-project" ]
-  [ "$REQDRIVE_PROJECT_TITLE" = "Test Project" ]
+  [ "$REQDRIVE_MANIFEST" = "$TEST_TEMP_DIR/reqdrive.json" ]
+  [ "$REQDRIVE_PROJECT_ROOT" = "$TEST_TEMP_DIR" ]
 }
 
-@test "reqdrive_load_config loads paths configuration" {
-  create_test_manifest "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  [ "$REQDRIVE_PATHS_REQUIREMENTS_DIR" = "docs/requirements" ]
-  [ "$REQDRIVE_PATHS_AGENT_DIR" = ".reqdrive/agent" ]
-  [ "$REQDRIVE_PATHS_APP_DIR" = "." ]
-  [ "$REQDRIVE_PATHS_CONTEXT_FILE" = "CLAUDE.md" ]
-}
-
-@test "reqdrive_load_config loads commands configuration" {
-  create_test_manifest "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  [ "$REQDRIVE_CMD_INSTALL" = "npm install" ]
-  [ "$REQDRIVE_CMD_TEST" = "npm test" ]
-  [ "$REQDRIVE_CMD_TYPECHECK" = "npx tsc --noEmit" ]
-  [ "$REQDRIVE_CMD_LINT" = "npx eslint ." ]
-}
-
-@test "reqdrive_load_config loads agent configuration" {
-  create_test_manifest "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  [ "$REQDRIVE_AGENT_MODEL" = "claude-opus-4-5-20251101" ]
-  [ "$REQDRIVE_AGENT_MAX_ITERATIONS" = "10" ]
-  [ "$REQDRIVE_AGENT_BRANCH_PREFIX" = "reqdrive" ]
-  [ "$REQDRIVE_AGENT_COMPLETION_SIGNAL" = "<promise>COMPLETE</promise>" ]
-}
-
-@test "reqdrive_load_config loads security configuration" {
-  create_test_manifest "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  [ "$REQDRIVE_SECURITY_MODE" = "interactive" ]
-}
-
-@test "reqdrive_load_config uses defaults for missing optional fields" {
-  # Create minimal manifest
+@test "reqdrive_load_config loads requirementsDir" {
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "minimal", "title": "Minimal"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"}
-}
+{"requirementsDir": "custom/reqs"}
 EOF
   cd "$TEST_TEMP_DIR"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
 
-  # Check defaults are applied
-  [ "$REQDRIVE_AGENT_MODEL" = "claude-opus-4-5-20251101" ]
-  [ "$REQDRIVE_AGENT_MAX_ITERATIONS" = "10" ]
-  [ "$REQDRIVE_ORCH_MAX_PARALLEL" = "3" ]
-  [ "$REQDRIVE_SECURITY_MODE" = "interactive" ]
+  [ "$REQDRIVE_REQUIREMENTS_DIR" = "custom/reqs" ]
 }
 
-# ============================================================================
-# reqdrive_resolve_path tests
-# ============================================================================
-
-@test "reqdrive_resolve_path resolves relative paths" {
-  create_test_manifest "$TEST_TEMP_DIR"
+@test "reqdrive_load_config loads testCommand" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"testCommand": "pytest"}
+EOF
   cd "$TEST_TEMP_DIR"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
 
-  result=$(reqdrive_resolve_path "docs/requirements")
-  [ "$result" = "$TEST_TEMP_DIR/docs/requirements" ]
+  [ "$REQDRIVE_TEST_COMMAND" = "pytest" ]
 }
 
-@test "reqdrive_resolve_path preserves absolute paths" {
-  create_test_manifest "$TEST_TEMP_DIR"
+@test "reqdrive_load_config loads model" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"model": "claude-opus-4-5-20251101"}
+EOF
   cd "$TEST_TEMP_DIR"
 
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
 
-  result=$(reqdrive_resolve_path "/absolute/path")
-  [ "$result" = "/absolute/path" ]
+  [ "$REQDRIVE_MODEL" = "claude-opus-4-5-20251101" ]
+}
+
+@test "reqdrive_load_config loads maxIterations" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"maxIterations": 20}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  [ "$REQDRIVE_MAX_ITERATIONS" = "20" ]
+}
+
+@test "reqdrive_load_config loads baseBranch" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"baseBranch": "develop"}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  [ "$REQDRIVE_BASE_BRANCH" = "develop" ]
+}
+
+@test "reqdrive_load_config loads prLabels" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"prLabels": ["feature", "automated"]}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  [ "$REQDRIVE_PR_LABELS" = "feature,automated" ]
+}
+
+@test "reqdrive_load_config loads projectName" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"projectName": "My Awesome Project"}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  [ "$REQDRIVE_PROJECT_NAME" = "My Awesome Project" ]
+}
+
+@test "reqdrive_load_config uses defaults for missing fields" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  [ "$REQDRIVE_REQUIREMENTS_DIR" = "docs/requirements" ]
+  [ "$REQDRIVE_MODEL" = "claude-sonnet-4-20250514" ]
+  [ "$REQDRIVE_MAX_ITERATIONS" = "10" ]
+  [ "$REQDRIVE_BASE_BRANCH" = "main" ]
+  [ "$REQDRIVE_PR_LABELS" = "agent-generated" ]
 }
 
 # ============================================================================
@@ -192,117 +193,4 @@ EOF
 
   run reqdrive_get_req_file "REQ-99"
   [ "$status" -ne 0 ]
-}
-
-# ============================================================================
-# reqdrive_get_deps tests
-# ============================================================================
-
-@test "reqdrive_get_deps returns dependencies for a requirement" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "requirements": {
-    "dependencies": {
-      "REQ-01": [],
-      "REQ-02": ["REQ-01"],
-      "REQ-03": ["REQ-01", "REQ-02"]
-    }
-  }
-}
-EOF
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  # REQ-01 has no deps
-  deps1=$(reqdrive_get_deps "REQ-01")
-  [ -z "$deps1" ]
-
-  # REQ-02 depends on REQ-01
-  deps2=$(reqdrive_get_deps "REQ-02")
-  [ "$deps2" = "REQ-01" ]
-
-  # REQ-03 has two deps
-  deps3=$(reqdrive_get_deps "REQ-03")
-  [[ "$deps3" == *"REQ-01"* ]]
-  [[ "$deps3" == *"REQ-02"* ]]
-}
-
-# ============================================================================
-# reqdrive_claude_security_args tests
-# ============================================================================
-
-@test "reqdrive_claude_security_args returns empty for interactive mode" {
-  create_test_manifest "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  result=$(reqdrive_claude_security_args agent)
-  [ -z "$result" ]
-}
-
-@test "reqdrive_claude_security_args returns skip flag for dangerous mode" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {"mode": "dangerous"}
-}
-EOF
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  result=$(reqdrive_claude_security_args agent)
-  [ "$result" = "--dangerously-skip-permissions" ]
-}
-
-@test "reqdrive_claude_security_args returns allowedTools for allowlist mode" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {
-    "mode": "allowlist",
-    "allowedTools": ["Bash", "Read", "Write"]
-  }
-}
-EOF
-  cd "$TEST_TEMP_DIR"
-
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-
-  result=$(reqdrive_claude_security_args agent)
-  [ "$result" = "--allowedTools Bash,Read,Write" ]
-}
-
-# ============================================================================
-# reqdrive_timestamp tests
-# ============================================================================
-
-@test "reqdrive_timestamp returns ISO-ish format" {
-  source "$REQDRIVE_ROOT/lib/config.sh"
-
-  result=$(reqdrive_timestamp)
-  # Should match pattern like 2024-01-15T12:30:45Z or with timezone offset
-  [[ "$result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2} ]]
-}
-
-# ============================================================================
-# reqdrive_run_id tests
-# ============================================================================
-
-@test "reqdrive_run_id returns date-based ID" {
-  source "$REQDRIVE_ROOT/lib/config.sh"
-
-  result=$(reqdrive_run_id)
-  # Should match pattern like 20240115-123045
-  [[ "$result" =~ ^[0-9]{8}-[0-9]{6}$ ]]
 }

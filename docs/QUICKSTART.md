@@ -1,4 +1,4 @@
-# reqdrive Quick Start Guide
+# reqdrive Quick Start Guide (v0.2.0)
 
 This guide walks you through using reqdrive with a real project.
 
@@ -45,7 +45,7 @@ reqdrive init
 This creates:
 - `reqdrive.json` - Pipeline configuration
 - `docs/requirements/` - Where you'll put requirement files
-- `.reqdrive/agent/prompt.md` - Agent instructions
+- `.reqdrive/agent/` - Agent workspace
 
 ## Step 2: Write a Requirement
 
@@ -75,23 +75,7 @@ Add basic user authentication to the application.
 - [ ] Logout clears session state
 ```
 
-## Step 3: Configure Dependencies (Optional)
-
-Edit `reqdrive.json` to define order:
-
-```json
-{
-  "requirements": {
-    "dependencies": {
-      "REQ-01": [],
-      "REQ-02": ["REQ-01"],
-      "REQ-03": ["REQ-01", "REQ-02"]
-    }
-  }
-}
-```
-
-## Step 4: Validate Configuration
+## Step 3: Validate Configuration
 
 ```bash
 reqdrive validate
@@ -102,86 +86,76 @@ Expected output:
 Validating: /path/to/project/reqdrive.json
 ─────────────────────────────────────
   ✓ Valid JSON
-  ✓ project.name = my-project
-  ✓ project.title = My Project
+  ✓ requirementsDir = docs/requirements
+  ✓ testCommand = npm test
   ...
 Validation PASSED
 ```
 
-## Step 5: View Dependency Graph
+## Step 4: Run the Pipeline
 
-```bash
-reqdrive deps
-```
-
-## Step 6: Run the Pipeline
-
-### Single requirement
 ```bash
 reqdrive run REQ-01
 ```
 
-### Multiple requirements
-```bash
-reqdrive run REQ-01 REQ-02 REQ-03
-```
+This will:
+1. Create branch `reqdrive/req-01` from your base branch
+2. Start the agent loop:
+   - Agent reads the requirement
+   - Agent creates a PRD with user stories
+   - Agent implements each story, one at a time
+   - Agent runs tests and commits after each story
+3. Create a GitHub PR when all stories are complete
 
-### All requirements (respects dependencies)
-```bash
-reqdrive run --all
-```
+## Step 5: Monitor Progress
 
-### Auto-detect next available
-```bash
-reqdrive run --next
-```
-
-## Step 7: Monitor Progress
+Watch the terminal output as the agent works. You can also check:
 
 ```bash
-# Check run status
-reqdrive status
+# View the generated PRD
+cat .reqdrive/agent/prd.json | jq .
 
-# View specific run
-reqdrive status 20240115-120000
+# View the progress log
+cat .reqdrive/agent/progress.txt
 
-# Watch logs in real-time
-tail -f .reqdrive/state/runs/*/logs/REQ-01.log
+# View iteration logs
+ls .reqdrive/agent/iteration-*.log
 ```
 
-## Step 8: Review the PR
+## Step 6: Review the PR
 
 The pipeline creates a GitHub PR with:
 - Summary of changes
 - Commit list
 - Validation checklist with acceptance criteria
-- Verification report
 
 Review the PR, complete the checklist, and merge when satisfied.
 
-## Cleanup
+## Configuration Options
 
-```bash
-# Remove worktrees
-reqdrive clean
-```
-
-## Security Modes
-
-Edit `reqdrive.json` to change how Claude Code handles permissions:
+Edit `reqdrive.json` to customize:
 
 ```json
 {
-  "security": {
-    "mode": "interactive"  // Default: prompts for each action
-  }
+  "requirementsDir": "docs/requirements",
+  "testCommand": "npm test",
+  "model": "claude-sonnet-4-20250514",
+  "maxIterations": 10,
+  "baseBranch": "main",
+  "prLabels": ["agent-generated"],
+  "projectName": "My Project"
 }
 ```
 
-Options:
-- `interactive` - Prompts for permission (recommended for local dev)
-- `allowlist` - Only allows specified tools
-- `dangerous` - No restrictions (use in sandboxes only)
+| Option | Description |
+|--------|-------------|
+| `requirementsDir` | Where to find REQ-*.md files |
+| `testCommand` | Command to run tests |
+| `model` | Claude model to use |
+| `maxIterations` | Max agent iterations |
+| `baseBranch` | Branch to create features from |
+| `prLabels` | Labels for created PRs |
+| `projectName` | Name shown in PR titles |
 
 ## Troubleshooting
 
@@ -194,15 +168,26 @@ Install Claude Code: https://claude.ai/code
 ### "gh: command not found"
 Install GitHub CLI: `winget install GitHub.cli`
 
-### Pipeline hangs
-- Check `.reqdrive/state/runs/*/logs/` for errors
-- In `interactive` mode, Claude may be waiting for permission
+### "No requirement file found"
+Make sure your requirement file is in the configured `requirementsDir` and starts with `REQ-XX`.
 
-### Worktree conflicts
-```bash
-reqdrive clean
-git worktree prune
-```
+### Agent doesn't complete
+- Check if `maxIterations` is too low
+- Review `.reqdrive/agent/prd.json` to see story status
+- Check `.reqdrive/agent/iteration-*.log` for errors
+
+### Tests fail
+- Verify `testCommand` is correct
+- Make sure tests pass before running the pipeline
+
+## Security Warning
+
+v0.2.0 uses `--dangerously-skip-permissions` mode by default. This grants the AI agent unrestricted system access.
+
+**Only run reqdrive in:**
+- Sandboxed environments (containers, VMs)
+- Projects where you trust the codebase
+- Systems without sensitive credentials
 
 ## Example Project Structure
 
@@ -212,21 +197,19 @@ my-project/
 ├── docs/
 │   └── requirements/
 │       ├── REQ-01-auth.md
-│       ├── REQ-02-dashboard.md
-│       └── REQ-03-api.md
+│       └── REQ-02-dashboard.md
 ├── .reqdrive/
-│   ├── agent/
-│   │   └── prompt.md          # Agent instructions
-│   └── state/
-│       └── runs/              # Pipeline run history
-├── src/                       # Your source code
-└── CLAUDE.md                  # Project context for Claude
+│   └── agent/                 # Agent workspace (gitignore this)
+│       ├── prompt.md
+│       ├── prd.json
+│       └── progress.txt
+└── src/                       # Your source code
 ```
 
 ## Tips
 
 1. **Keep requirements focused** - One feature per REQ file
-2. **Write clear acceptance criteria** - Agent uses these to verify completion
-3. **Use dependencies** - Let complex features build on simpler ones
+2. **Write clear acceptance criteria** - Agent uses these to create user stories
+3. **Start small** - Test with a simple requirement first
 4. **Review PRs carefully** - AI-generated code needs human validation
-5. **Iterate on the prompt** - Customize `.reqdrive/agent/prompt.md` for your codebase
+5. **Gitignore agent state** - Add `.reqdrive/agent/` to `.gitignore`

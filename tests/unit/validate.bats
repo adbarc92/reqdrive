@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for lib/validate.sh
+# Unit tests for lib/validate.sh (v0.2.0)
 
 # Load test helpers
 load '../test_helper/common'
@@ -43,67 +43,56 @@ teardown() {
 }
 
 # ============================================================================
-# Required fields validation
+# Field display
 # ============================================================================
 
-@test "validate.sh fails when project.name is missing" {
+@test "validate.sh shows configured requirementsDir" {
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"}
-}
+{"requirementsDir": "custom/requirements"}
 EOF
+  mkdir -p "$TEST_TEMP_DIR/custom/requirements"
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Missing required field"* ]]
-  [[ "$output" == *"project.name"* ]]
-}
-
-@test "validate.sh fails when project.title is missing" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"}
-}
-EOF
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Missing required field"* ]]
-  [[ "$output" == *"project.title"* ]]
-}
-
-@test "validate.sh fails when paths.requirementsDir is missing" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"agentDir": "agent"}
-}
-EOF
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Missing required field"* ]]
+  [ "$status" -eq 0 ]
   [[ "$output" == *"requirementsDir"* ]]
+  [[ "$output" == *"custom/requirements"* ]]
 }
 
-@test "validate.sh fails when paths.agentDir is missing" {
+@test "validate.sh shows configured testCommand" {
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs"}
-}
+{"testCommand": "npm test"}
 EOF
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Missing required field"* ]]
-  [[ "$output" == *"agentDir"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"testCommand"* ]]
+  [[ "$output" == *"npm test"* ]]
+}
+
+@test "validate.sh shows configured model" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"model": "claude-opus-4-5-20251101"}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"model"* ]]
+  [[ "$output" == *"claude-opus-4-5-20251101"* ]]
+}
+
+@test "validate.sh shows configured baseBranch" {
+  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
+{"baseBranch": "develop"}
+EOF
+  cd "$TEST_TEMP_DIR"
+
+  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"baseBranch"* ]]
+  [[ "$output" == *"develop"* ]]
 }
 
 # ============================================================================
@@ -112,229 +101,48 @@ EOF
 
 @test "validate.sh warns when requirementsDir does not exist" {
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "nonexistent", "agentDir": "agent"}
-}
+{"requirementsDir": "nonexistent"}
 EOF
-  mkdir -p "$TEST_TEMP_DIR/agent"
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  # Should warn but still pass (warning not error)
+  # Should warn but still pass
   [[ "$output" == *"WARN"* ]] || [[ "$output" == *"does not exist"* ]]
 }
 
-# ============================================================================
-# Commands validation
-# ============================================================================
-
-@test "validate.sh shows configured commands" {
+@test "validate.sh shows requirement file count" {
   create_test_project "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [[ "$output" == *"install:"* ]]
-  [[ "$output" == *"test:"* ]]
-}
-
-@test "validate.sh handles null commands" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "commands": {"install": null, "test": null}
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
+  create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Feature 1"
+  create_test_requirement "$TEST_TEMP_DIR" "REQ-02" "Feature 2"
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
   [ "$status" -eq 0 ]
-  [[ "$output" == *"disabled"* ]] || [[ "$output" == *"null"* ]]
+  [[ "$output" == *"2 requirement files"* ]]
 }
 
 # ============================================================================
-# Dependencies validation
+# Default values
 # ============================================================================
 
-@test "validate.sh passes with valid dependencies" {
+@test "validate.sh passes with minimal empty config" {
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "requirements": {
-    "dependencies": {
-      "REQ-01": [],
-      "REQ-02": ["REQ-01"],
-      "REQ-03": ["REQ-01", "REQ-02"]
-    }
-  }
-}
+{}
 EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no circular dependencies"* ]]
+  [[ "$output" == *"Validation PASSED"* ]]
 }
 
-@test "validate.sh fails on circular dependencies" {
+@test "validate.sh warns about missing fields" {
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "requirements": {
-    "dependencies": {
-      "REQ-01": ["REQ-02"],
-      "REQ-02": ["REQ-01"]
-    }
-  }
-}
+{}
 EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
   cd "$TEST_TEMP_DIR"
 
   run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Circular dependency"* ]]
-}
-
-@test "validate.sh fails when dependency references undefined requirement" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "requirements": {
-    "dependencies": {
-      "REQ-01": ["REQ-99"]
-    }
-  }
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"not defined"* ]]
-}
-
-# ============================================================================
-# Security validation
-# ============================================================================
-
-@test "validate.sh accepts interactive security mode" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {"mode": "interactive"}
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"interactive"* ]]
-}
-
-@test "validate.sh accepts allowlist security mode" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {"mode": "allowlist", "allowedTools": ["Bash", "Read"]}
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"allowlist"* ]]
-}
-
-@test "validate.sh warns about dangerous security mode" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {"mode": "dangerous"}
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"dangerous"* ]]
-  [[ "$output" == *"UNRESTRICTED"* ]] || [[ "$output" == *"sandboxed"* ]]
-}
-
-@test "validate.sh fails on invalid security mode" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {"mode": "invalid-mode"}
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Invalid security.mode"* ]]
-}
-
-@test "validate.sh warns when allowlist mode has no tools" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "security": {"mode": "allowlist", "allowedTools": []}
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  # Should pass but warn
-  [[ "$output" == *"WARN"* ]] || [[ "$output" == *"no allowedTools"* ]]
-}
-
-# ============================================================================
-# Verification checks validation
-# ============================================================================
-
-@test "validate.sh shows verification check count" {
-  cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
-{
-  "project": {"name": "test", "title": "Test"},
-  "paths": {"requirementsDir": "reqs", "agentDir": "agent"},
-  "verification": {
-    "checks": [
-      {"name": "TypeScript", "command": "tsc"},
-      {"name": "Tests", "command": "npm test"}
-    ]
-  }
-}
-EOF
-  mkdir -p "$TEST_TEMP_DIR/reqs" "$TEST_TEMP_DIR/agent"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"2 verification checks"* ]]
-}
-
-@test "validate.sh handles no verification checks" {
-  create_test_project "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  run bash "$REQDRIVE_ROOT/bin/reqdrive" validate
-  [[ "$output" == *"No verification checks"* ]] || [[ "$output" == *"will use commands"* ]]
+  # Empty config should show warnings for unset fields
+  [[ "$output" == *"WARN"* ]] || [[ "$output" == *"not set"* ]]
 }

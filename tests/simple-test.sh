@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simple test runner for reqdrive (no bats dependency)
+# Simple test runner for reqdrive v0.2.0 (no bats dependency)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +33,7 @@ TEST_TEMP=$(mktemp -d)
 trap "rm -rf $TEST_TEMP" EXIT
 
 echo "========================================"
-echo "  reqdrive simple test suite"
+echo "  reqdrive v0.2.0 simple test suite"
 echo "========================================"
 echo ""
 
@@ -42,95 +42,78 @@ echo ""
 # ─────────────────────────────────────────────
 echo "--- Config Tests ---"
 
-# Test: reqdrive_load_config_path finds manifest
+# Test: reqdrive_find_manifest finds manifest
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{"requirementsDir":"docs/requirements","testCommand":"npm test"}
 EOF
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  [ -n "$REQDRIVE_MANIFEST" ] && [ "$REQDRIVE_PROJECT_ROOT" = "$TEST_TEMP" ]
+  result=$(reqdrive_find_manifest)
+  [ "$result" = "$TEST_TEMP/reqdrive.json" ]
 )
 test_result "config: finds manifest in current dir" $?
 
-# Test: reqdrive_load_config_path finds manifest in parent
+# Test: reqdrive_find_manifest finds manifest in parent
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{"requirementsDir":"docs/requirements","testCommand":"npm test"}
 EOF
   mkdir -p subdir/nested
   cd subdir/nested
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  [ "$REQDRIVE_PROJECT_ROOT" = "$TEST_TEMP" ]
+  result=$(reqdrive_find_manifest)
+  [ "$result" = "$TEST_TEMP/reqdrive.json" ]
 )
 test_result "config: finds manifest in parent dir" $?
 
-# Test: reqdrive_load_config loads project name
+# Test: reqdrive_load_config loads settings
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"my-proj","title":"My Project"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{"requirementsDir":"docs/reqs","testCommand":"npm test","model":"claude-opus-4-5-20251101","maxIterations":5,"baseBranch":"develop","projectName":"my-project"}
 EOF
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
-  [ "$REQDRIVE_PROJECT_NAME" = "my-proj" ] && [ "$REQDRIVE_PROJECT_TITLE" = "My Project" ]
+  [ "$REQDRIVE_REQUIREMENTS_DIR" = "docs/reqs" ] &&
+  [ "$REQDRIVE_TEST_COMMAND" = "npm test" ] &&
+  [ "$REQDRIVE_MODEL" = "claude-opus-4-5-20251101" ] &&
+  [ "$REQDRIVE_MAX_ITERATIONS" = "5" ] &&
+  [ "$REQDRIVE_BASE_BRANCH" = "develop" ] &&
+  [ "$REQDRIVE_PROJECT_NAME" = "my-project" ]
 )
-test_result "config: loads project name and title" $?
+test_result "config: loads all settings" $?
 
-# Test: reqdrive_resolve_path
+# Test: reqdrive_load_config uses defaults
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{}
 EOF
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
-  result=$(reqdrive_resolve_path "docs/requirements")
-  [ "$result" = "$TEST_TEMP/docs/requirements" ]
+  [ "$REQDRIVE_REQUIREMENTS_DIR" = "docs/requirements" ] &&
+  [ "$REQDRIVE_MODEL" = "claude-sonnet-4-20250514" ] &&
+  [ "$REQDRIVE_MAX_ITERATIONS" = "10" ] &&
+  [ "$REQDRIVE_BASE_BRANCH" = "main" ]
 )
-test_result "config: resolves relative paths" $?
+test_result "config: uses defaults for missing fields" $?
 
-# Test: reqdrive_resolve_path preserves absolute
+# Test: reqdrive_get_req_file finds requirement
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{"requirementsDir":"docs/requirements"}
 EOF
+  mkdir -p docs/requirements
+  echo "# REQ-01" > docs/requirements/REQ-01-test-feature.md
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
-  result=$(reqdrive_resolve_path "/absolute/path")
-  [ "$result" = "/absolute/path" ]
+  result=$(reqdrive_get_req_file "REQ-01")
+  [ -n "$result" ] && [ -f "$result" ]
 )
-test_result "config: preserves absolute paths" $?
-
-# Test: security args for interactive mode
-(
-  cd "$TEST_TEMP"
-  cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"},"security":{"mode":"interactive"}}
-EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-  result=$(reqdrive_claude_security_args agent)
-  [ -z "$result" ]
-)
-test_result "config: interactive mode returns empty args" $?
-
-# Test: security args for dangerous mode
-(
-  cd "$TEST_TEMP"
-  cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"},"security":{"mode":"dangerous"}}
-EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-  result=$(reqdrive_claude_security_args agent)
-  [ "$result" = "--dangerously-skip-permissions" ]
-)
-test_result "config: dangerous mode returns skip flag" $?
+test_result "config: reqdrive_get_req_file finds requirement" $?
 
 echo ""
 echo "--- Validation Tests ---"
@@ -138,12 +121,12 @@ echo "--- Validation Tests ---"
 # Test: validate passes for valid manifest
 (
   cd "$TEST_TEMP"
-  mkdir -p reqs agent
+  mkdir -p docs/requirements
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{"requirementsDir":"docs/requirements","testCommand":"npm test"}
 EOF
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
+  reqdrive_load_config
   output=$(source "$REQDRIVE_ROOT/lib/validate.sh" 2>&1)
   echo "$output" | grep -q "Validation PASSED"
 )
@@ -151,98 +134,66 @@ test_result "validate: passes for valid manifest" $?
 
 # Test: validate fails for invalid JSON
 (
-  set +e  # Disable errexit for this test
+  set +e
   cd "$TEST_TEMP"
   echo "{ invalid json }" > reqdrive.json
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  # validate.sh should exit non-zero for invalid JSON
+  reqdrive_load_config 2>/dev/null
   (set -e; source "$REQDRIVE_ROOT/lib/validate.sh") >/dev/null 2>&1
   status=$?
-  [ "$status" -ne 0 ]  # Expect non-zero exit
+  [ "$status" -ne 0 ]
 )
 test_result "validate: fails for invalid JSON" $?
-
-# Test: validate fails for missing project.name
-(
-  cd "$TEST_TEMP"
-  cat > reqdrive.json <<'EOF'
-{"project":{"title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
-EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  output=$(source "$REQDRIVE_ROOT/lib/validate.sh" 2>&1) || true
-  echo "$output" | grep -q "Missing required field"
-)
-test_result "validate: fails for missing project.name" $?
-
-# Test: validate detects circular dependencies
-(
-  cd "$TEST_TEMP"
-  mkdir -p reqs agent
-  cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"},"requirements":{"dependencies":{"REQ-01":["REQ-02"],"REQ-02":["REQ-01"]}}}
-EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  output=$(source "$REQDRIVE_ROOT/lib/validate.sh" 2>&1) || true
-  echo "$output" | grep -q "Circular dependency"
-)
-test_result "validate: detects circular dependencies" $?
-
-# Test: validate fails for invalid security mode
-(
-  cd "$TEST_TEMP"
-  mkdir -p reqs agent
-  cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"},"security":{"mode":"invalid"}}
-EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  output=$(source "$REQDRIVE_ROOT/lib/validate.sh" 2>&1) || true
-  echo "$output" | grep -q "Invalid security.mode"
-)
-test_result "validate: fails for invalid security mode" $?
 
 echo ""
 echo "--- CLI Tests ---"
 
-# Test: --version exits successfully
+# Test: --version shows version
 (
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  # Simulate version command logic
-  VERSION="0.1.0"
-  [ -n "$VERSION" ]
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" --version 2>&1)
+  echo "$output" | grep -q "0.2.0"
 )
-test_result "cli: version is defined" $?
+test_result "cli: --version shows 0.2.0" $?
 
-# Test: dispatch handles validate command
+# Test: --help shows usage
+(
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" --help 2>&1)
+  echo "$output" | grep -q "Usage:" &&
+  echo "$output" | grep -q "init" &&
+  echo "$output" | grep -q "run" &&
+  echo "$output" | grep -q "validate"
+)
+test_result "cli: --help shows usage" $?
+
+# Test: unknown command shows error
+(
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" unknown-cmd 2>&1) || true
+  echo "$output" | grep -q "Unknown command"
+)
+test_result "cli: unknown command shows error" $?
+
+# Test: validate command works
 (
   cd "$TEST_TEMP"
-  mkdir -p reqs agent
+  mkdir -p docs/requirements
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"}}
+{"requirementsDir":"docs/requirements","testCommand":"npm test"}
 EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config_path
-  # validate.sh should succeed
-  source "$REQDRIVE_ROOT/lib/validate.sh" >/dev/null 2>&1
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" validate 2>&1)
+  echo "$output" | grep -q "Validation PASSED"
 )
 test_result "cli: validate command works" $?
 
-# Test: deps command works with dependencies
+# Test: run requires REQ-ID
 (
   cd "$TEST_TEMP"
-  mkdir -p reqs agent
   cat > reqdrive.json <<'EOF'
-{"project":{"name":"test","title":"Test"},"paths":{"requirementsDir":"reqs","agentDir":"agent"},"requirements":{"dependencies":{"REQ-01":[],"REQ-02":["REQ-01"]}}}
+{"requirementsDir":"docs/requirements"}
 EOF
-  source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
-  output=$(source "$REQDRIVE_ROOT/lib/deps.sh" 2>&1)
-  echo "$output" | grep -q "REQ-01"
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" run 2>&1) || true
+  echo "$output" | grep -q "Usage: reqdrive run"
 )
-test_result "cli: deps command shows dependencies" $?
+test_result "cli: run requires REQ-ID argument" $?
 
 echo ""
 echo "========================================"
