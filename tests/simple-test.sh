@@ -279,6 +279,59 @@ test_result "schema: check_schema_version passes on correct version" $?
 test_result "schema: check_schema_version errors on bad major version" $?
 
 echo ""
+echo "--- Iteration Summary Tests ---"
+
+# Test: extract_iteration_summary extracts valid summary
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  mkdir -p "$TEST_TEMP/agent"
+
+  # Simulate agent output with summary block
+  output='Some implementation output here...
+
+```json:iteration-summary
+{
+  "storyId": "US-003",
+  "action": "implemented",
+  "filesChanged": ["src/filter.ts"],
+  "testsRun": true,
+  "testsPassed": true,
+  "committed": true,
+  "notes": "Added filter dropdown"
+}
+```'
+
+  extract_iteration_summary "$output" "$TEST_TEMP/agent" 1 2>/dev/null
+  [ -f "$TEST_TEMP/agent/iteration-1.summary.json" ] &&
+  jq -r '.storyId' "$TEST_TEMP/agent/iteration-1.summary.json" | grep -q "US-003"
+)
+test_result "summary: extract_iteration_summary extracts valid block" $?
+
+# Test: extract_iteration_summary handles missing summary gracefully
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  mkdir -p "$TEST_TEMP/agent2"
+
+  output="Just some regular output without a summary block."
+  extract_iteration_summary "$output" "$TEST_TEMP/agent2" 1 2>/dev/null
+  # Should not create summary file
+  [ ! -f "$TEST_TEMP/agent2/iteration-1.summary.json" ]
+)
+test_result "summary: handles missing summary gracefully" $?
+
+echo ""
 echo "--- CLI Tests ---"
 
 # Test: --version shows version (no claude needed)

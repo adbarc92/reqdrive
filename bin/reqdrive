@@ -47,6 +47,7 @@ Usage:
   reqdrive init              Create reqdrive.json config
   reqdrive run <REQ-ID>      Run pipeline for a requirement
   reqdrive validate          Validate config
+  reqdrive status            Show iteration progress and story completion
   reqdrive migrate           Add version fields to existing configs
 
 Run Options:
@@ -172,6 +173,65 @@ cmd_validate() {
   source "$REQDRIVE_ROOT/lib/validate.sh"
 }
 
+cmd_status() {
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/agent"
+  local prd_file="$agent_dir/prd.json"
+
+  echo "═══════════════════════════════════════════════════════"
+  echo "  reqdrive status"
+  echo "═══════════════════════════════════════════════════════"
+  echo ""
+
+  # Show PRD story completion
+  if [ -f "$prd_file" ]; then
+    local project source_req
+    project=$(jq -r '.project // "unknown"' "$prd_file")
+    source_req=$(jq -r '.sourceReq // "unknown"' "$prd_file")
+    local total passed remaining
+    total=$(jq '.userStories | length' "$prd_file")
+    passed=$(jq '[.userStories[] | select(.passes == true)] | length' "$prd_file")
+    remaining=$((total - passed))
+
+    echo "PRD: $project ($source_req)"
+    echo "Stories: $passed/$total complete ($remaining remaining)"
+    echo ""
+    echo "  ID       Status  Title"
+    echo "  ──────── ──────  ─────────────────────────────────"
+    jq -r '.userStories[] | "  \(.id)   \(if .passes then "DONE" else "TODO" end)    \(.title)"' "$prd_file"
+  else
+    echo "No prd.json found. Pipeline has not been run yet."
+  fi
+
+  echo ""
+
+  # Show iteration summaries
+  local summaries
+  summaries=$(ls "$agent_dir"/iteration-*.summary.json 2>/dev/null || true)
+
+  if [ -n "$summaries" ]; then
+    echo "Iteration History:"
+    echo "  Iter  Story     Action       Notes"
+    echo "  ────  ────────  ───────────  ─────────────────────────────────"
+
+    for f in $summaries; do
+      local iter_num
+      iter_num=$(basename "$f" | sed 's/iteration-//;s/\.summary\.json//')
+      local story_id action notes
+      story_id=$(jq -r '.storyId // "-"' "$f")
+      action=$(jq -r '.action // "-"' "$f")
+      notes=$(jq -r '.notes // ""' "$f" | head -c 40)
+      printf "  %-4s  %-8s  %-11s  %s\n" "$iter_num" "$story_id" "$action" "$notes"
+    done
+  else
+    echo "No iteration summaries found."
+  fi
+
+  echo ""
+}
+
 cmd_migrate() {
   source "$REQDRIVE_ROOT/lib/schema.sh"
   source "$REQDRIVE_ROOT/lib/config.sh"
@@ -231,6 +291,9 @@ case "${1:-}" in
     ;;
   validate)
     cmd_validate
+    ;;
+  status)
+    cmd_status
     ;;
   migrate)
     cmd_migrate

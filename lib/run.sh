@@ -79,6 +79,45 @@ load_checkpoint() {
   echo "$checkpoint_file"
 }
 
+# ── Iteration Summary Extraction ──────────────────────────────────────────────
+
+# Extract the iteration summary JSON block from agent output
+# Args: $1 = output text, $2 = agent_dir, $3 = iteration number
+# Saves to iteration-N.summary.json if found
+extract_iteration_summary() {
+  local output="$1"
+  local agent_dir="$2"
+  local iteration="$3"
+
+  local summary_file="$agent_dir/iteration-$iteration.summary.json"
+
+  # Extract the json:iteration-summary fenced block
+  local summary
+  summary=$(echo "$output" | sed -n '/^```json:iteration-summary/,/^```/{/^```/d;p}')
+
+  if [ -z "$summary" ]; then
+    log_warn "No iteration summary found in agent output (iteration $iteration)"
+    return 0
+  fi
+
+  # Validate it's valid JSON
+  if ! echo "$summary" | jq empty 2>/dev/null; then
+    log_warn "Iteration summary is not valid JSON (iteration $iteration)"
+    return 0
+  fi
+
+  echo "$summary" > "$summary_file"
+
+  # Log a one-line summary
+  local story_id action notes
+  story_id=$(echo "$summary" | jq -r '.storyId // "unknown"')
+  action=$(echo "$summary" | jq -r '.action // "unknown"')
+  notes=$(echo "$summary" | jq -r '.notes // ""')
+  log_info "Summary: Story: $story_id | Action: $action | $notes"
+
+  return 0
+}
+
 # ── Main Pipeline ────────────────────────────────────────────────────────────
 
 run_pipeline() {
@@ -273,6 +312,22 @@ If more remain: end normally (next iteration continues)
 - Commit after each story
 - Keep tests passing
 
+## Iteration Summary
+
+At the END of your response, output a summary:
+
+```json:iteration-summary
+{
+  "storyId": "US-XXX",
+  "action": "implemented|planned|skipped|failed",
+  "filesChanged": ["path/to/file"],
+  "testsRun": true,
+  "testsPassed": true,
+  "committed": true,
+  "notes": "Brief description"
+}
+```
+
 ---
 
 ## Requirement Document
@@ -341,6 +396,9 @@ PROMPT_START
     # Save iteration log
     echo "$output" > "$agent_dir/iteration-$i.log"
     rm -f "$tmpout"
+
+    # Extract iteration summary
+    extract_iteration_summary "$output" "$agent_dir" "$i"
 
     # Save checkpoint
     save_checkpoint "$agent_dir" "$req_id" "$branch" "$i" "$prd_file"
