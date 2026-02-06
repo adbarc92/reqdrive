@@ -56,6 +56,7 @@ PROJECT_NAME="${PROJECT_NAME:-$(basename "$PROJECT_DIR")}"
 # ── Write minimal reqdrive.json ──────────────────────────────────────
 cat > "$PROJECT_DIR/reqdrive.json" <<JSON
 {
+  "version": "0.3.0",
   "requirementsDir": "$REQ_DIR",
   "testCommand": "$TEST_CMD",
   "model": "claude-sonnet-4-20250514",

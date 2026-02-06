@@ -2,6 +2,9 @@
 # config.sh - Minimal configuration loader for reqdrive
 # Finds reqdrive.json and exports REQDRIVE_* environment variables
 
+# Source schema versioning
+source "${REQDRIVE_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/schema.sh"
+
 # ── Find manifest ────────────────────────────────────────────────────────
 
 reqdrive_find_manifest() {
@@ -36,6 +39,12 @@ reqdrive_load_config() {
 
   export REQDRIVE_MANIFEST="$manifest"
   export REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"
+
+  # Check schema version
+  check_schema_version "$manifest" || {
+    echo "ERROR: Incompatible config version. Run 'reqdrive migrate' to update." >&2
+    exit 1
+  }
 
   # Core settings (with sensible defaults)
   export REQDRIVE_REQUIREMENTS_DIR

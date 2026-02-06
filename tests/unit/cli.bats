@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for bin/reqdrive CLI dispatch (v0.2.0)
+# Unit tests for bin/reqdrive CLI dispatch (v0.3.0)
 
 # Load test helpers
 load '../test_helper/common'
@@ -28,7 +28,7 @@ teardown() {
   run bash "$REQDRIVE_ROOT/bin/reqdrive" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"reqdrive"* ]]
-  [[ "$output" == *"0.2.0"* ]]
+  [[ "$output" == *"0.3.0"* ]]
 }
 
 @test "reqdrive -v shows version" {

@@ -7,7 +7,7 @@ set -euo pipefail
 REQDRIVE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export REQDRIVE_ROOT
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 # Source error codes
 source "$REQDRIVE_ROOT/lib/errors.sh"
@@ -47,6 +47,7 @@ Usage:
   reqdrive init              Create reqdrive.json config
   reqdrive run <REQ-ID>      Run pipeline for a requirement
   reqdrive validate          Validate config
+  reqdrive migrate           Add version fields to existing configs
 
 Run Options:
   -i, --interactive          Run in interactive mode (default, safer)
@@ -171,6 +172,53 @@ cmd_validate() {
   source "$REQDRIVE_ROOT/lib/validate.sh"
 }
 
+cmd_migrate() {
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/config.sh"
+
+  local manifest
+  manifest=$(reqdrive_find_manifest 2>/dev/null) || {
+    echo "No reqdrive.json found. Nothing to migrate." >&2
+    exit "$EXIT_CONFIG_ERROR"
+  }
+
+  local project_root
+  project_root="$(dirname "$manifest")"
+
+  echo "Migrating to schema version $REQDRIVE_SCHEMA_VERSION..."
+
+  # Migrate reqdrive.json
+  if [ -f "$manifest" ]; then
+    local has_version
+    has_version=$(jq -r '.version // empty' "$manifest" 2>/dev/null)
+    if [ -z "$has_version" ]; then
+      local tmp
+      tmp=$(jq --arg v "$REQDRIVE_SCHEMA_VERSION" '. + {version: $v}' "$manifest")
+      echo "$tmp" > "$manifest"
+      echo "  Updated: reqdrive.json (added version $REQDRIVE_SCHEMA_VERSION)"
+    else
+      echo "  Skipped: reqdrive.json (already has version $has_version)"
+    fi
+  fi
+
+  # Migrate prd.json if it exists
+  local prd_file="$project_root/.reqdrive/agent/prd.json"
+  if [ -f "$prd_file" ]; then
+    local has_version
+    has_version=$(jq -r '.version // empty' "$prd_file" 2>/dev/null)
+    if [ -z "$has_version" ]; then
+      local tmp
+      tmp=$(jq --arg v "$REQDRIVE_SCHEMA_VERSION" '. + {version: $v}' "$prd_file")
+      echo "$tmp" > "$prd_file"
+      echo "  Updated: .reqdrive/agent/prd.json (added version $REQDRIVE_SCHEMA_VERSION)"
+    else
+      echo "  Skipped: .reqdrive/agent/prd.json (already has version $has_version)"
+    fi
+  fi
+
+  echo "Migration complete."
+}
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -183,6 +231,9 @@ case "${1:-}" in
     ;;
   validate)
     cmd_validate
+    ;;
+  migrate)
+    cmd_migrate
     ;;
   -v|--version)
     echo "reqdrive $VERSION"

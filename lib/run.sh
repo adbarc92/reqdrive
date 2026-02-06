@@ -35,6 +35,7 @@ save_checkpoint() {
 
   cat > "$checkpoint_file" <<EOF
 {
+  "version": "0.3.0",
   "req_id": "$req_id",
   "branch": "$branch",
   "iteration": $iteration,
@@ -199,6 +200,7 @@ If `.reqdrive/agent/prd.json` does not exist:
 
 ```json
 {
+  "version": "0.3.0",
   "project": "<Project> - <Feature>",
   "sourceReq": "<REQ-XX>",
   "description": "...",

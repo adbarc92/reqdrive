@@ -1,4 +1,4 @@
-# Common test helper functions for reqdrive tests (v0.2.0)
+# Common test helper functions for reqdrive tests (v0.3.0)
 
 # Get the project root directory
 export REQDRIVE_ROOT
@@ -63,6 +63,7 @@ create_test_manifest() {
   local dir="${1:-.}"
   cat > "$dir/reqdrive.json" <<'EOF'
 {
+  "version": "0.3.0",
   "requirementsDir": "docs/requirements",
   "testCommand": "npm test",
   "model": "claude-sonnet-4-20250514",

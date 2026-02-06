@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simple test runner for reqdrive v0.2.0 (no bats dependency)
+# Simple test runner for reqdrive v0.3.0 (no bats dependency)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,7 +49,7 @@ TEST_TEMP=$(mktemp -d)
 trap "rm -rf $TEST_TEMP" EXIT
 
 echo "========================================"
-echo "  reqdrive v0.2.0 simple test suite"
+echo "  reqdrive v0.3.0 simple test suite"
 echo "========================================"
 echo ""
 
@@ -251,14 +251,42 @@ test_result "preflight: check_clean_working_tree passes on clean repo" $?
 test_result "preflight: check_clean_working_tree fails on dirty repo" $?
 
 echo ""
+echo "--- Schema Version Tests ---"
+
+# Test: check_schema_version warns on missing version
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"requirementsDir":"docs/requirements"}' > "$TEST_TEMP/no-version.json"
+  output=$(check_schema_version "$TEST_TEMP/no-version.json" 2>&1)
+  echo "$output" | grep -q "No version field"
+)
+test_result "schema: check_schema_version warns on missing version" $?
+
+# Test: check_schema_version passes on correct version
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"version":"0.3.0"}' > "$TEST_TEMP/good-version.json"
+  check_schema_version "$TEST_TEMP/good-version.json" 2>/dev/null
+)
+test_result "schema: check_schema_version passes on correct version" $?
+
+# Test: check_schema_version errors on incompatible major version
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"version":"9.0.0"}' > "$TEST_TEMP/bad-version.json"
+  ! check_schema_version "$TEST_TEMP/bad-version.json" 2>/dev/null
+)
+test_result "schema: check_schema_version errors on bad major version" $?
+
+echo ""
 echo "--- CLI Tests ---"
 
 # Test: --version shows version (no claude needed)
 (
   output=$("$REQDRIVE_ROOT/bin/reqdrive" --version 2>&1)
-  echo "$output" | grep -q "0.2.0"
+  echo "$output" | grep -q "0.3.0"
 )
-test_result "cli: --version shows 0.2.0" $?
+test_result "cli: --version shows 0.3.0" $?
 
 # Test: --help shows usage (no claude needed)
 (

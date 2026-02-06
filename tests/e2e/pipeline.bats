@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# End-to-end tests for the reqdrive v0.2.0 pipeline
+# End-to-end tests for the reqdrive v0.3.0 pipeline
 
 # Load test helpers
 load '../test_helper/common'

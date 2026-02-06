@@ -1,4 +1,5 @@
 {
+  "version": "0.3.0",
   "requirementsDir": "docs/requirements",
   "testCommand": "npm test",
   "model": "claude-sonnet-4-20250514",

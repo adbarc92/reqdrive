@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for lib/config.sh (v0.2.0)
+# Unit tests for lib/config.sh (v0.3.0)
 
 # Load test helpers
 load '../test_helper/common'
