@@ -1,0 +1,9 @@
+{
+  "version": "0.3.0",
+  "req_id": "REQ-01",
+  "branch": "reqdrive/req-01",
+  "iteration": 3,
+  "timestamp": "2025-01-30T10:00:00+00:00",
+  "prd_exists": true,
+  "stories_complete": ["US-001", "US-002"]
+}

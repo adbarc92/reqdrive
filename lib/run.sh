@@ -59,6 +59,13 @@ load_checkpoint() {
     return 0
   fi
 
+  # Validate checkpoint schema
+  if ! validate_checkpoint_schema "$checkpoint_file" 2>/dev/null; then
+    log_warn "Checkpoint file has invalid schema, ignoring"
+    echo ""
+    return 0
+  fi
+
   # Verify checkpoint is for the right requirement
   local checkpoint_req
   checkpoint_req=$(jq -r '.req_id' "$checkpoint_file" 2>/dev/null || echo "")
@@ -171,6 +178,13 @@ run_pipeline() {
   local prompt_file="$agent_dir/prompt.md"
   local progress_file="$agent_dir/progress.txt"
   local prd_file="$agent_dir/prd.json"
+
+  # Validate existing PRD on resume
+  if [ -f "$prd_file" ]; then
+    if ! validate_prd_schema "$prd_file" 2>/dev/null; then
+      log_warn "Existing prd.json has schema issues (may be fixed by agent)"
+    fi
+  fi
 
   # Initialize progress file if needed
   if [ ! -f "$progress_file" ]; then
@@ -330,6 +344,13 @@ PROMPT_START
 
     # Save checkpoint
     save_checkpoint "$agent_dir" "$req_id" "$branch" "$i" "$prd_file"
+
+    # Validate PRD after each iteration
+    if [ -f "$prd_file" ]; then
+      if ! validate_prd_schema "$prd_file" 2>/dev/null; then
+        log_warn "prd.json has schema issues after iteration $i (agent may fix next iteration)"
+      fi
+    fi
 
     # Check for completion
     if echo "$output" | grep -qF "$completion_signal"; then

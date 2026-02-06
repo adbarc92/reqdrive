@@ -1,0 +1,24 @@
+{
+  "version": "0.3.0",
+  "project": "Test Project - Auth Feature",
+  "sourceReq": "REQ-01",
+  "description": "Add authentication to the app",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Login form",
+      "description": "Create a login form with email and password",
+      "acceptanceCriteria": ["Form renders", "Validates input"],
+      "priority": 1,
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Session management",
+      "description": "Handle user sessions after login",
+      "acceptanceCriteria": ["Session persists on reload"],
+      "priority": 2,
+      "passes": false
+    }
+  ]
+}

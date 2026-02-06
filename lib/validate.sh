@@ -10,12 +10,24 @@ ERRORS=0
 echo "Validating: $M"
 echo "─────────────────────────────────────"
 
-# ── JSON syntax ───────────────────────────────────────────────────────
+# ── JSON syntax and schema ────────────────────────────────────────────
 if ! jq empty "$M" 2>/dev/null; then
   echo "FAIL: Invalid JSON syntax"
   exit 1
 fi
 echo "  ✓ Valid JSON"
+
+# Run schema validation
+if ! validate_config_schema "$M" 2>/dev/null; then
+  echo "  FAIL: Schema validation errors detected"
+  # Re-run to show errors
+  validate_config_schema "$M" 2>&1 | while IFS= read -r line; do
+    echo "  $line"
+  done
+  ERRORS=$((ERRORS + 1))
+else
+  echo "  ✓ Schema valid"
+fi
 
 # ── Check fields ─────────────────────────────────────────────────────
 check_field() {

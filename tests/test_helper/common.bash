@@ -58,7 +58,7 @@ teardown_temp_dir() {
   fi
 }
 
-# Create a minimal valid manifest for testing (v0.2.0 format)
+# Create a minimal valid manifest for testing (v0.3.0 format)
 create_test_manifest() {
   local dir="${1:-.}"
   cat > "$dir/reqdrive.json" <<'EOF'
@@ -144,6 +144,58 @@ if [[ "$1" == "pr" && "$2" == "create" ]]; then
 fi
 EOF
   chmod +x "$TEST_TEMP_DIR/bin/gh"
+}
+
+# Create a test PRD file
+create_test_prd() {
+  local dir="${1:-.}"
+  local req_id="${2:-REQ-01}"
+  mkdir -p "$dir/.reqdrive/agent"
+  cat > "$dir/.reqdrive/agent/prd.json" <<EOF
+{
+  "version": "0.3.0",
+  "project": "Test Project - Feature",
+  "sourceReq": "$req_id",
+  "description": "Test PRD",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "First story",
+      "description": "Implement the first feature",
+      "acceptanceCriteria": ["Feature works", "Tests pass"],
+      "priority": 1,
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Second story",
+      "description": "Implement the second feature",
+      "acceptanceCriteria": ["Feature works"],
+      "priority": 2,
+      "passes": false
+    }
+  ]
+}
+EOF
+}
+
+# Create a test checkpoint file
+create_test_checkpoint() {
+  local dir="${1:-.}"
+  local req_id="${2:-REQ-01}"
+  local iteration="${3:-1}"
+  mkdir -p "$dir/.reqdrive/agent"
+  cat > "$dir/.reqdrive/agent/checkpoint.json" <<EOF
+{
+  "version": "0.3.0",
+  "req_id": "$req_id",
+  "branch": "reqdrive/$(echo "$req_id" | tr '[:upper:]' '[:lower:]')",
+  "iteration": $iteration,
+  "timestamp": "$(date -Iseconds)",
+  "prd_exists": true,
+  "stories_complete": []
+}
+EOF
 }
 
 # ── Assertions ───────────────────────────────────────────────────────────────

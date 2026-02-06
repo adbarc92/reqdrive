@@ -1,8 +1,6 @@
 {
-  "project": {
-    "name": "test-project"
-  },
-  "paths": {
-    "agentDir": ".reqdrive/agent"
-  }
+  "version": "0.3.0",
+  "requirementsDir": 123,
+  "maxIterations": "not-a-number",
+  "prLabels": "not-an-array"
 }
