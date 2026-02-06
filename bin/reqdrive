@@ -49,6 +49,8 @@ Usage:
   reqdrive validate          Validate config
   reqdrive status            Show iteration progress and story completion
   reqdrive migrate           Add version fields to existing configs
+  reqdrive plan              Generate PRD from requirement (coming soon)
+  reqdrive orchestrate       Run multiple requirements in sequence (coming soon)
 
 Run Options:
   -i, --interactive          Run in interactive mode (default, safer)
@@ -279,6 +281,24 @@ cmd_migrate() {
   echo "Migration complete."
 }
 
+cmd_plan() {
+  echo "reqdrive plan - Generate and validate PRD from requirement"
+  echo ""
+  echo "This command will analyze a requirement file and generate a structured"
+  echo "PRD (Product Requirements Document) before running the agent pipeline."
+  echo ""
+  echo "Coming soon. For now, the agent generates the PRD during 'reqdrive run'."
+}
+
+cmd_orchestrate() {
+  echo "reqdrive orchestrate - Run multiple requirements in sequence"
+  echo ""
+  echo "This command will process multiple requirements in dependency order,"
+  echo "running each through the pipeline sequentially."
+  echo ""
+  echo "Coming soon. For now, run individual requirements with 'reqdrive run <REQ-ID>'."
+}
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -297,6 +317,12 @@ case "${1:-}" in
     ;;
   migrate)
     cmd_migrate
+    ;;
+  plan)
+    cmd_plan
+    ;;
+  orchestrate)
+    cmd_orchestrate
     ;;
   -v|--version)
     echo "reqdrive $VERSION"

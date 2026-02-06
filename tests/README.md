@@ -1,10 +1,29 @@
 # reqdrive Tests
 
-This directory contains unit and E2E tests for reqdrive.
+This directory contains unit, E2E, and simple tests for reqdrive v0.3.0.
+
+## Running Tests
+
+```bash
+# Simple tests (no bats dependency)
+bash tests/simple-test.sh
+
+# All bats tests
+./tests/run-tests.sh
+
+# Specific test suite
+bats tests/unit/schema.bats
+bats tests/unit/config.bats
+bats tests/e2e/pipeline.bats
+
+# Verbose / TAP output
+bats --verbose-run tests/unit/
+bats --formatter tap tests/
+```
 
 ## Prerequisites
 
-Install bats-core and helper libraries:
+For bats tests, install bats-core:
 
 ```bash
 # macOS
@@ -19,38 +38,27 @@ git clone https://github.com/bats-core/bats-support.git tests/test_helper/bats-s
 git clone https://github.com/bats-core/bats-assert.git tests/test_helper/bats-assert
 ```
 
-## Running Tests
-
-```bash
-# Run all tests
-./tests/run-tests.sh
-
-# Run specific test file
-bats tests/unit/config.bats
-
-# Run with verbose output
-bats --verbose-run tests/unit/
-
-# Run with TAP output (CI-friendly)
-bats --formatter tap tests/
-```
-
 ## Test Structure
 
 ```
 tests/
-├── run-tests.sh           # Test runner script
+├── simple-test.sh         # Dependency-free test suite (bash only)
+├── run-tests.sh           # Bats test runner
 ├── test_helper/
-│   └── common.bash        # Shared test utilities
+│   └── common.bash        # Shared test utilities and helpers
 ├── unit/                  # Unit tests for lib/*.sh
-│   ├── config.bats
-│   ├── validate.bats
-│   └── worktree.bats
+│   ├── cli.bats           # CLI dispatch tests
+│   ├── config.bats        # Config loading tests
+│   ├── schema.bats        # Schema validation tests
+│   └── validate.bats      # Validate command tests
 ├── e2e/                   # End-to-end tests
-│   └── pipeline.bats
-└── fixtures/              # Test data
+│   └── pipeline.bats      # Full pipeline flow tests
+└── fixtures/              # Test data (v0.3.0 format)
     ├── valid-manifest.json
-    └── invalid-manifest.json
+    ├── invalid-manifest-missing-fields.json
+    ├── valid-prd.json
+    ├── invalid-prd-missing-stories.json
+    └── valid-checkpoint.json
 ```
 
 ## Writing Tests
@@ -60,8 +68,8 @@ Tests use bats syntax:
 ```bash
 @test "description of test" {
   run some_command
-  assert_success
-  assert_output --partial "expected text"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"expected text"* ]]
 }
 ```
 
