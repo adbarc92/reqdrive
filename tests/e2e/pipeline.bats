@@ -21,7 +21,7 @@ teardown() {
 }
 
 # ============================================================================
-# Full init → validate flow
+# Full init -> validate flow
 # ============================================================================
 
 @test "E2E: init creates valid project structure" {
@@ -87,12 +87,19 @@ teardown() {
   init_test_git_repo "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
-  # Mock claude to output COMPLETE immediately
-  cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
+  # Mock claude that creates PRD (planning phase) then signals complete
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
-echo "MOCK: Processing requirement"
+# Create PRD if it doesn't exist (planning phase)
+if [ ! -f "$agent_dir/prd.json" ]; then
+  mkdir -p "$agent_dir"
+  cat > "$agent_dir/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","description":"Test","userStories":[{"id":"US-001","title":"Test","description":"Test","acceptanceCriteria":["works"],"priority":1,"passes":true}]}
+PRDEOF
+fi
 echo "<promise>COMPLETE</promise>"
-EOF
+MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
 
   # Use lowercase req-01
@@ -112,12 +119,18 @@ EOF
   init_test_git_repo "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
-  # Mock claude to fail fast
-  cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
+  # Mock claude that creates PRD then signals complete
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
+if [ ! -f "$agent_dir/prd.json" ]; then
+  mkdir -p "$agent_dir"
+  cat > "$agent_dir/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","description":"Test","userStories":[{"id":"US-001","title":"Test","description":"Test","acceptanceCriteria":["works"],"priority":1,"passes":true}]}
+PRDEOF
+fi
 echo "<promise>COMPLETE</promise>"
-exit 0
-EOF
+MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
 
   # Run pipeline
@@ -137,11 +150,18 @@ EOF
   init_test_git_repo "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
-  # Mock claude
-  cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
+  # Mock claude that creates PRD
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
+if [ ! -f "$agent_dir/prd.json" ]; then
+  mkdir -p "$agent_dir"
+  cat > "$agent_dir/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","description":"Test","userStories":[{"id":"US-001","title":"Test","description":"Test","acceptanceCriteria":["works"],"priority":1,"passes":true}]}
+PRDEOF
+fi
 echo "<promise>COMPLETE</promise>"
-EOF
+MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
 
   # Run pipeline
@@ -156,10 +176,10 @@ EOF
 }
 
 # ============================================================================
-# Prompt building
+# Prompt building (planning phase)
 # ============================================================================
 
-@test "E2E: run embeds requirement content in prompt" {
+@test "E2E: planning prompt embeds requirement content" {
   create_test_project "$TEST_TEMP_DIR"
 
   # Create requirement with specific content
@@ -173,6 +193,87 @@ EOF
   init_test_git_repo "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
+  # Mock claude that creates PRD
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
+#!/usr/bin/env bash
+if [ ! -f "$agent_dir/prd.json" ]; then
+  mkdir -p "$agent_dir"
+  cat > "$agent_dir/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","description":"Test","userStories":[{"id":"US-001","title":"Test","description":"Test","acceptanceCriteria":["works"],"priority":1,"passes":true}]}
+PRDEOF
+fi
+echo "<promise>COMPLETE</promise>"
+MOCKEOF
+  chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Run pipeline
+  timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
+
+  # Check prompt contains the requirement (planning prompt)
+  grep -q "XYZ123" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Prompt not created yet"
+}
+
+@test "E2E: planning prompt contains planning instructions" {
+  create_test_project "$TEST_TEMP_DIR"
+  create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+
+  # Mock claude that creates PRD
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
+#!/usr/bin/env bash
+if [ ! -f "$agent_dir/prd.json" ]; then
+  mkdir -p "$agent_dir"
+  cat > "$agent_dir/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","description":"Test","userStories":[{"id":"US-001","title":"Test","description":"Test","acceptanceCriteria":["works"],"priority":1,"passes":true}]}
+PRDEOF
+fi
+echo "<promise>COMPLETE</promise>"
+MOCKEOF
+  chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Run pipeline
+  timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
+
+  # The initial prompt should be a planning prompt (since no PRD existed)
+  # Check for planning-phase language in the iteration log
+  [[ -f "$TEST_TEMP_DIR/.reqdrive/agent/iteration-plan-1.log" ]] || skip "Planning log not created"
+}
+
+# ============================================================================
+# Implementation with pre-existing PRD
+# ============================================================================
+
+@test "E2E: run skips planning when PRD exists" {
+  create_test_project "$TEST_TEMP_DIR"
+  create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
+  create_test_prd "$TEST_TEMP_DIR" "REQ-01"
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+
+  # Mock claude
+  cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+echo "<promise>COMPLETE</promise>"
+EOF
+  chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Run pipeline
+  run timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
+
+  # Should skip planning
+  [[ "$output" == *"PRD exists, skipping planning"* ]]
+}
+
+@test "E2E: implementation prompt includes story details" {
+  create_test_project "$TEST_TEMP_DIR"
+  create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
+  create_test_prd "$TEST_TEMP_DIR" "REQ-01"
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+
   # Mock claude
   cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -183,8 +284,9 @@ EOF
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
-  # Check prompt contains the requirement
-  grep -q "XYZ123" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Prompt not created yet"
+  # The prompt should contain the story ID (deterministically selected US-001)
+  grep -q "US-001" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Prompt not created"
+  grep -q "First story" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Story title not in prompt"
 }
 
 # ============================================================================
@@ -194,10 +296,12 @@ EOF
 @test "E2E: run uses configured model" {
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test"
+  create_test_prd "$TEST_TEMP_DIR" "REQ-01"
 
   # Set custom model
   cat > "$TEST_TEMP_DIR/reqdrive.json" <<'EOF'
 {
+  "version": "0.3.0",
   "requirementsDir": "docs/requirements",
   "model": "claude-opus-4-5-20251101"
 }

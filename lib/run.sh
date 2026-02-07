@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run.sh - Core Ralph loop: requirement -> implementation -> PR
+# run.sh - Core pipeline: requirement -> planning -> implementation -> PR
 # Usage: source this file, then call run_pipeline <REQ-ID>
 
 set -e
@@ -118,6 +118,232 @@ extract_iteration_summary() {
   return 0
 }
 
+# ── Prompt Builders ──────────────────────────────────────────────────────────
+
+# Build a planning-only prompt
+# Args: $1 = prompt_file, $2 = sanitized requirement content
+build_planning_prompt() {
+  local prompt_file="$1"
+  local sanitized_content="$2"
+
+  cat > "$prompt_file" <<'PROMPT_PLAN'
+# Agent Instructions: Planning Phase
+
+You are an autonomous coding agent. Your ONLY job in this phase is to create a PRD.
+
+## Task
+
+Read the requirement below and create a PRD with user stories at `.reqdrive/agent/prd.json`.
+
+**Do NOT implement anything.** Only create the PRD file.
+
+## PRD Schema
+
+```json
+{
+  "version": "0.3.0",
+  "project": "<Project> - <Feature>",
+  "sourceReq": "<REQ-XX>",
+  "description": "Brief description of the feature",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "...",
+      "description": "...",
+      "acceptanceCriteria": ["..."],
+      "priority": 1,
+      "passes": false
+    }
+  ]
+}
+```
+
+## Rules
+
+- Target 3-8 user stories (combine related items if needed)
+- Each story must be completable in a single implementation session
+- Priority 1 = implement first, higher numbers = implement later
+- All stories start with `passes: false`
+- Include clear, testable acceptance criteria for each story
+- The `version` field must be `"0.3.0"`
+
+## Iteration Summary
+
+At the END of your response, output a summary:
+
+```json:iteration-summary
+{
+  "storyId": "N/A",
+  "action": "planned",
+  "filesChanged": [".reqdrive/agent/prd.json"],
+  "testsRun": false,
+  "testsPassed": false,
+  "committed": false,
+  "notes": "Created PRD with N user stories"
+}
+```
+
+---
+
+## Requirement Document
+
+PROMPT_PLAN
+
+  echo "$sanitized_content" >> "$prompt_file"
+}
+
+# Build a story-specific implementation prompt
+# Args: $1 = prompt_file, $2 = story_id, $3 = story_json, $4 = sanitized requirement content
+build_implementation_prompt() {
+  local prompt_file="$1"
+  local story_id="$2"
+  local story_json="$3"
+  local sanitized_content="$4"
+
+  local story_title story_description story_criteria
+  story_title=$(echo "$story_json" | jq -r '.title')
+  story_description=$(echo "$story_json" | jq -r '.description')
+  story_criteria=$(echo "$story_json" | jq -r '.acceptanceCriteria | map("- " + .) | join("\n")')
+
+  cat > "$prompt_file" <<PROMPT_IMPL
+# Agent Instructions: Implement Story ${story_id}
+
+You are an autonomous coding agent. Implement the following user story.
+
+## Your Story
+
+- **ID:** ${story_id}
+- **Title:** ${story_title}
+- **Description:** ${story_description}
+
+### Acceptance Criteria
+
+${story_criteria}
+
+## Instructions
+
+1. Read \`.reqdrive/agent/progress.txt\` for context from previous iterations
+2. Read \`.reqdrive/agent/prd.json\` for full PRD context
+3. Implement **this story only** (${story_id})
+4. Run quality checks (test, typecheck, lint as appropriate)
+5. If checks pass:
+   - Commit with message: \`feat: [${story_id}] - ${story_title}\`
+   - Update PRD: set \`passes: true\` for story ${story_id}
+   - Append progress to \`progress.txt\`
+
+## Progress Format
+
+Append to progress.txt:
+\`\`\`
+## [Date] - ${story_id}
+- What was implemented
+- Files changed
+- Learnings for future iterations
+---
+\`\`\`
+
+## Important
+
+- Implement ONLY story ${story_id}
+- Commit after completing the story
+- Keep tests passing
+- If you discover a dependency issue, update priorities in prd.json and leave this story as \`passes: false\`
+
+## Iteration Summary
+
+At the END of your response, output a summary:
+
+\`\`\`json:iteration-summary
+{
+  "storyId": "${story_id}",
+  "action": "implemented|skipped|failed",
+  "filesChanged": ["path/to/file"],
+  "testsRun": true,
+  "testsPassed": true,
+  "committed": true,
+  "notes": "Brief description"
+}
+\`\`\`
+
+---
+
+## Requirement Document (Reference)
+
+${sanitized_content}
+PROMPT_IMPL
+}
+
+# ── Story Selection ──────────────────────────────────────────────────────────
+
+# Select the next story to implement (highest priority where passes == false)
+# Args: $1 = prd_file
+# Prints the story ID, or empty string if all complete
+select_next_story() {
+  local prd_file="$1"
+
+  if [ ! -f "$prd_file" ]; then
+    echo ""
+    return 0
+  fi
+
+  local story_id
+  story_id=$(jq -r '
+    [.userStories[] | select(.passes == false)]
+    | sort_by(.priority)
+    | first
+    | .id // empty
+  ' "$prd_file" 2>/dev/null)
+
+  echo "$story_id"
+}
+
+# Get full story JSON object by ID
+# Args: $1 = prd_file, $2 = story_id
+get_story_details() {
+  local prd_file="$1"
+  local story_id="$2"
+
+  jq --arg id "$story_id" '.userStories[] | select(.id == $id)' "$prd_file" 2>/dev/null
+}
+
+# ── Claude Invocation ────────────────────────────────────────────────────────
+
+# Run a single Claude invocation
+# Args: $1 = prompt_file, $2 = agent_dir, $3 = label, $4 = model
+# Returns: output in $CLAUDE_OUTPUT
+run_claude_iteration() {
+  local prompt_file="$1"
+  local agent_dir="$2"
+  local label="$3"
+  local model="$4"
+
+  local tmpout="$agent_dir/.output-${label}.tmp"
+
+  # Build claude command based on mode
+  local claude_cmd="claude --model $model"
+
+  if [ "${REQDRIVE_INTERACTIVE:-true}" = "false" ]; then
+    claude_cmd="$claude_cmd --dangerously-skip-permissions"
+  fi
+
+  log_info "Running claude [$label] ($([ "${REQDRIVE_INTERACTIVE:-true}" = "true" ] && echo "interactive" || echo "unsafe") mode)..."
+
+  # Execute claude
+  if cat "$prompt_file" | timeout 1800 $claude_cmd 2>&1 | tee "$tmpout"; then
+    : # Success
+  else
+    local exit_code=$?
+    if [ $exit_code -eq 124 ]; then
+      log_error "Claude timed out after 30 minutes"
+    elif [ $exit_code -ne 0 ]; then
+      log_warn "Claude exited with code $exit_code"
+    fi
+  fi
+
+  CLAUDE_OUTPUT=$(cat "$tmpout" 2>/dev/null || echo "")
+  rm -f "$tmpout"
+}
+
 # ── Main Pipeline ────────────────────────────────────────────────────────────
 
 run_pipeline() {
@@ -234,116 +460,82 @@ Started: $(date)
 EOF
   fi
 
-  # ── Build the prompt ──
-  # Sanitize the requirement content before embedding
+  # Sanitize the requirement content before embedding in prompts
   local sanitized_content
   sanitized_content=$(sanitize_for_prompt "$requirement_content")
 
-  cat > "$prompt_file" <<'PROMPT_START'
-# Agent Instructions
-
-You are an autonomous coding agent. Your job is to implement a requirement.
-
-## Phase 1: Planning (if no prd.json exists)
-
-If `.reqdrive/agent/prd.json` does not exist:
-
-1. Read the requirement below
-2. Create a PRD with user stories at `.reqdrive/agent/prd.json`:
-
-```json
-{
-  "version": "0.3.0",
-  "project": "<Project> - <Feature>",
-  "sourceReq": "<REQ-XX>",
-  "description": "...",
-  "userStories": [
-    {
-      "id": "US-001",
-      "title": "...",
-      "description": "...",
-      "acceptanceCriteria": ["..."],
-      "priority": 1,
-      "passes": false
-    }
-  ]
-}
-```
-
-Rules for stories:
-- Target 3-8 stories (combine related items if needed)
-- Each story completable in one iteration
-- Priority 1 = do first, higher = do later
-- All start with `passes: false`
-
-## Phase 2: Implementation
-
-1. Read `.reqdrive/agent/prd.json`
-2. Read `.reqdrive/agent/progress.txt` (check Codebase Patterns section)
-3. Pick the highest-priority story where `passes: false`
-4. Implement that single story
-5. Run quality checks (test, typecheck, lint as appropriate)
-6. If checks pass:
-   - Commit with message: `feat: [Story ID] - [Story Title]`
-   - Update PRD: set `passes: true` for this story
-   - Append progress to `progress.txt`
-
-## Progress Format
-
-Append to progress.txt:
-```
-## [Date] - [Story ID]
-- What was implemented
-- Files changed
-- Learnings for future iterations
----
-```
-
-## Stop Condition
-
-After completing a story, check if ALL stories have `passes: true`.
-
-If ALL complete: output `<promise>COMPLETE</promise>`
-If more remain: end normally (next iteration continues)
-
-## Important
-
-- ONE story per iteration
-- Commit after each story
-- Keep tests passing
-
-## Iteration Summary
-
-At the END of your response, output a summary:
-
-```json:iteration-summary
-{
-  "storyId": "US-XXX",
-  "action": "implemented|planned|skipped|failed",
-  "filesChanged": ["path/to/file"],
-  "testsRun": true,
-  "testsPassed": true,
-  "committed": true,
-  "notes": "Brief description"
-}
-```
-
----
-
-## Requirement Document
-
-PROMPT_START
-
-  # Append the sanitized requirement content
-  echo "$sanitized_content" >> "$prompt_file"
-
-  log_info "Prompt built at $prompt_file"
-
-  # ── Run Ralph loop ──
   local max_iterations="${REQDRIVE_MAX_ITERATIONS:-10}"
   local model="${REQDRIVE_MODEL:-claude-sonnet-4-20250514}"
   local completion_signal="<promise>COMPLETE</promise>"
+  local CLAUDE_OUTPUT=""
 
+  # ══════════════════════════════════════════════════════════════════════
+  # Phase 1: Planning (create PRD if it doesn't exist)
+  # ══════════════════════════════════════════════════════════════════════
+
+  if [ ! -f "$prd_file" ]; then
+    log_info ""
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "  Phase 1: Planning"
+    log_info "═══════════════════════════════════════════════════════"
+
+    build_planning_prompt "$prompt_file" "$sanitized_content"
+    log_info "Planning prompt built"
+
+    local plan_attempts=0
+    local plan_max=2
+
+    while [ "$plan_attempts" -lt "$plan_max" ]; do
+      plan_attempts=$((plan_attempts + 1))
+      log_info "Planning attempt $plan_attempts of $plan_max"
+
+      run_claude_iteration "$prompt_file" "$agent_dir" "plan-$plan_attempts" "$model"
+
+      # Save planning log
+      echo "$CLAUDE_OUTPUT" > "$agent_dir/iteration-plan-$plan_attempts.log"
+      extract_iteration_summary "$CLAUDE_OUTPUT" "$agent_dir" "plan-$plan_attempts"
+
+      # Check if PRD was created
+      if [ -f "$prd_file" ]; then
+        if validate_prd_schema "$prd_file" 2>/dev/null; then
+          log_info "PRD created and validated successfully"
+          break
+        else
+          log_warn "PRD created but has schema issues"
+          if [ "$plan_attempts" -lt "$plan_max" ]; then
+            log_info "Retrying planning..."
+            rm -f "$prd_file"
+          fi
+        fi
+      else
+        log_warn "PRD not created by agent"
+        if [ "$plan_attempts" -lt "$plan_max" ]; then
+          log_info "Retrying planning..."
+        fi
+      fi
+    done
+
+    if [ ! -f "$prd_file" ]; then
+      log_error "Agent failed to create PRD after $plan_max attempts"
+      exit "$EXIT_AGENT_ERROR"
+    fi
+
+    # Final validation (warn only, don't block)
+    if ! validate_prd_schema "$prd_file" 2>/dev/null; then
+      log_warn "PRD has schema issues but proceeding with implementation"
+    fi
+  else
+    log_info "PRD exists, skipping planning phase"
+  fi
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Phase 2: Implementation (one story per iteration)
+  # ══════════════════════════════════════════════════════════════════════
+
+  log_info ""
+  log_info "═══════════════════════════════════════════════════════"
+  log_info "  Phase 2: Implementation"
+  log_info "═══════════════════════════════════════════════════════"
   log_info "Starting agent loop (max $max_iterations iterations, starting at $start_iteration)"
   log_info "Model: $model"
   log_info "Mode: ${REQDRIVE_INTERACTIVE:-true} (interactive)"
@@ -354,51 +546,33 @@ PROMPT_START
     log_info "  Iteration $i of $max_iterations"
     log_info "═══════════════════════════════════════════════════════"
 
-    # Check story progress if PRD exists
-    if [ -f "$prd_file" ]; then
-      local remaining
-      remaining=$(jq '[.userStories[] | select(.passes == false)] | length' "$prd_file" 2>/dev/null || echo "?")
-      log_info "Stories remaining: $remaining"
+    # Deterministic story selection
+    local next_story
+    next_story=$(select_next_story "$prd_file")
 
-      if [ "$remaining" = "0" ]; then
-        log_info "All stories complete!"
-        break
-      fi
+    if [ -z "$next_story" ]; then
+      log_info "All stories complete!"
+      break
     fi
 
-    # Build claude command based on mode
-    local claude_cmd="claude --model $model"
+    local story_json
+    story_json=$(get_story_details "$prd_file" "$next_story")
+    local story_title
+    story_title=$(echo "$story_json" | jq -r '.title')
 
-    if [ "${REQDRIVE_INTERACTIVE:-true}" = "false" ]; then
-      claude_cmd="$claude_cmd --dangerously-skip-permissions"
-    fi
+    log_info "Target story: $next_story - $story_title"
 
-    # Run Claude with prompt piped via stdin
-    local output=""
-    local tmpout="$agent_dir/.output-$i.tmp"
+    # Build story-specific prompt
+    build_implementation_prompt "$prompt_file" "$next_story" "$story_json" "$sanitized_content"
 
-    log_info "Running claude ($([ "${REQDRIVE_INTERACTIVE:-true}" = "true" ] && echo "interactive" || echo "unsafe") mode)..."
-
-    # Execute claude
-    if cat "$prompt_file" | timeout 1800 $claude_cmd 2>&1 | tee "$tmpout"; then
-      : # Success
-    else
-      local exit_code=$?
-      if [ $exit_code -eq 124 ]; then
-        log_error "Claude timed out after 30 minutes"
-      elif [ $exit_code -ne 0 ]; then
-        log_warn "Claude exited with code $exit_code"
-      fi
-    fi
-
-    output=$(cat "$tmpout" 2>/dev/null || echo "")
+    # Run Claude
+    run_claude_iteration "$prompt_file" "$agent_dir" "$i" "$model"
 
     # Save iteration log
-    echo "$output" > "$agent_dir/iteration-$i.log"
-    rm -f "$tmpout"
+    echo "$CLAUDE_OUTPUT" > "$agent_dir/iteration-$i.log"
 
     # Extract iteration summary
-    extract_iteration_summary "$output" "$agent_dir" "$i"
+    extract_iteration_summary "$CLAUDE_OUTPUT" "$agent_dir" "$i"
 
     # Save checkpoint
     save_checkpoint "$agent_dir" "$req_id" "$branch" "$i" "$prd_file"
@@ -410,10 +584,10 @@ PROMPT_START
       fi
     fi
 
-    # Check for completion
-    if echo "$output" | grep -qF "$completion_signal"; then
+    # Check for completion signal (secondary indicator)
+    if echo "$CLAUDE_OUTPUT" | grep -qF "$completion_signal"; then
       log_info ""
-      log_info "Agent completed all stories at iteration $i"
+      log_info "Agent signaled completion at iteration $i"
       break
     fi
 
