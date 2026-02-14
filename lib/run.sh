@@ -205,6 +205,14 @@ build_implementation_prompt() {
   story_description=$(echo "$story_json" | jq -r '.description')
   story_criteria=$(echo "$story_json" | jq -r '.acceptanceCriteria | map("- " + .) | join("\n")')
 
+  # Sanitize PRD-derived fields before heredoc expansion.
+  # The unquoted heredoc below expands $vars and $(cmds), so any
+  # attacker-controlled content from the PRD must be escaped first.
+  story_id=$(sanitize_for_prompt "$story_id")
+  story_title=$(sanitize_for_prompt "$story_title")
+  story_description=$(sanitize_for_prompt "$story_description")
+  story_criteria=$(sanitize_for_prompt "$story_criteria")
+
   cat > "$prompt_file" <<PROMPT_IMPL
 # Agent Instructions: Implement Story ${story_id}
 
