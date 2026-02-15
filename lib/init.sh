@@ -72,19 +72,19 @@ echo "Created: reqdrive.json"
 
 # ── Create directories ───────────────────────────────────────────────
 mkdir -p "$PROJECT_DIR/$REQ_DIR"
-mkdir -p "$PROJECT_DIR/.reqdrive/agent"
+mkdir -p "$PROJECT_DIR/.reqdrive/runs"
 
 echo "Created: $REQ_DIR/"
-echo "Created: .reqdrive/agent/"
+echo "Created: .reqdrive/runs/"
 
 # ── Suggest .gitignore additions ─────────────────────────────────────
 if [ -f "$PROJECT_DIR/.gitignore" ]; then
-  if ! grep -q '.reqdrive/agent' "$PROJECT_DIR/.gitignore" 2>/dev/null; then
-    read -rp "Add .reqdrive/agent to .gitignore? (Y/n): " ADD_GITIGNORE
+  if ! grep -q '.reqdrive/runs' "$PROJECT_DIR/.gitignore" 2>/dev/null; then
+    read -rp "Add .reqdrive/runs to .gitignore? (Y/n): " ADD_GITIGNORE
     if [ "$ADD_GITIGNORE" != "n" ] && [ "$ADD_GITIGNORE" != "N" ]; then
       echo "" >> "$PROJECT_DIR/.gitignore"
-      echo "# reqdrive agent state" >> "$PROJECT_DIR/.gitignore"
-      echo ".reqdrive/agent/" >> "$PROJECT_DIR/.gitignore"
+      echo "# reqdrive run state" >> "$PROJECT_DIR/.gitignore"
+      echo ".reqdrive/runs/" >> "$PROJECT_DIR/.gitignore"
       echo "Updated .gitignore"
     fi
   fi

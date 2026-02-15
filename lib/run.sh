@@ -15,6 +15,49 @@ log_info() { echo "[INFO]  $(date +%H:%M:%S) $*" >&2; }
 log_warn() { echo "[WARN]  $(date +%H:%M:%S) $*" >&2; }
 log_error() { echo "[ERROR] $(date +%H:%M:%S) $*" >&2; }
 
+# ── Run Status Management ────────────────────────────────────────────────────
+
+# Write or update run.json in the agent directory
+# Args: $1=agent_dir $2=status $3=req_id [$4=iteration] [$5=exit_code] [$6=pr_url]
+write_run_status() {
+  local agent_dir="$1"
+  local status="$2"
+  local req_id="$3"
+  local iteration="${4:-0}"
+  local exit_code="${5:-null}"
+  local pr_url="${6:-null}"
+
+  local run_file="$agent_dir/run.json"
+  local now
+  now=$(date -Iseconds)
+
+  # Preserve started_at from existing file, or use now
+  local started_at="$now"
+  if [ -f "$run_file" ]; then
+    started_at=$(jq -r '.started_at // empty' "$run_file" 2>/dev/null)
+    [ -z "$started_at" ] && started_at="$now"
+  fi
+
+  # Quote string values, leave null unquoted
+  local exit_code_json="$exit_code"
+  [ "$exit_code" != "null" ] && exit_code_json="$exit_code"
+  local pr_url_json="null"
+  [ "$pr_url" != "null" ] && [ -n "$pr_url" ] && pr_url_json="\"$pr_url\""
+
+  cat > "$run_file" <<EOF
+{
+  "status": "$status",
+  "pid": $$,
+  "req_id": "$req_id",
+  "started_at": "$started_at",
+  "updated_at": "$now",
+  "current_iteration": $iteration,
+  "exit_code": $exit_code_json,
+  "pr_url": $pr_url_json
+}
+EOF
+}
+
 # ── Checkpoint Management ────────────────────────────────────────────────────
 
 save_checkpoint() {
@@ -133,7 +176,7 @@ You are an autonomous coding agent. Your ONLY job in this phase is to create a P
 
 ## Task
 
-Read the requirement below and create a PRD with user stories at `.reqdrive/agent/prd.json`.
+Read the requirement below and create a PRD with user stories at the path shown in the progress file (typically `.reqdrive/runs/<req-slug>/prd.json`).
 
 **Do NOT implement anything.** Only create the PRD file.
 
@@ -230,8 +273,8 @@ ${story_criteria}
 
 ## Instructions
 
-1. Read \`.reqdrive/agent/progress.txt\` for context from previous iterations
-2. Read \`.reqdrive/agent/prd.json\` for full PRD context
+1. Read the progress file in the \`.reqdrive/runs/\` directory for context from previous iterations
+2. Read the \`prd.json\` file in the same run directory for full PRD context
 3. Implement **this story only** (${story_id})
 4. Run quality checks (test, typecheck, lint as appropriate)
 5. If checks pass:
@@ -352,6 +395,31 @@ run_claude_iteration() {
   rm -f "$tmpout"
 }
 
+# ── Completion Hook ──────────────────────────────────────────────────────────
+
+# Execute the completion hook if configured
+# Args: $1=req_id $2=status $3=pr_url $4=branch $5=exit_code
+run_completion_hook() {
+  local hook="${REQDRIVE_COMPLETION_HOOK:-}"
+  [ -z "$hook" ] && return 0
+
+  local req_id="$1"
+  local status="$2"
+  local pr_url="${3:-}"
+  local branch="${4:-}"
+  local exit_code="${5:-0}"
+
+  log_info "Running completion hook..."
+
+  # Export variables for the hook command
+  REQ_ID="$req_id" \
+  STATUS="$status" \
+  PR_URL="$pr_url" \
+  BRANCH="$branch" \
+  EXIT_CODE="$exit_code" \
+    bash -c "$hook" 2>&1 || log_warn "Completion hook exited with code $?"
+}
+
 # ── Main Pipeline ────────────────────────────────────────────────────────────
 
 run_pipeline() {
@@ -373,7 +441,7 @@ run_pipeline() {
   local req_dir="$REQDRIVE_PROJECT_ROOT/$REQDRIVE_REQUIREMENTS_DIR"
   local branch="reqdrive/$req_slug"
   local base_branch="${REQDRIVE_BASE_BRANCH:-main}"
-  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/agent"
+  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/runs/$req_slug"
 
   # ── Run pre-flight checks ──
   if [ "${REQDRIVE_FORCE:-false}" = "true" ]; then
@@ -414,6 +482,15 @@ run_pipeline() {
 
   # ── Check for resume ──
   mkdir -p "$agent_dir"
+
+  # Write initial run status
+  write_run_status "$agent_dir" "running" "$req_id"
+
+  # Trap signals to mark run as interrupted
+  trap 'write_run_status "$agent_dir" "interrupted" "$req_id" "${i:-0}" "130"; exit 130' INT
+  trap 'write_run_status "$agent_dir" "interrupted" "$req_id" "${i:-0}" "143"; exit 143' TERM
+  trap 'write_run_status "$agent_dir" "interrupted" "$req_id" "${i:-0}" "129"; exit 129' HUP
+
   local start_iteration=1
   local checkpoint_file=""
 
@@ -525,6 +602,8 @@ EOF
 
     if [ ! -f "$prd_file" ]; then
       log_error "Agent failed to create PRD after $plan_max attempts"
+      write_run_status "$agent_dir" "failed" "$req_id" "0" "$EXIT_AGENT_ERROR"
+      run_completion_hook "$req_id" "failed" "" "$branch" "$EXIT_AGENT_ERROR"
       exit "$EXIT_AGENT_ERROR"
     fi
 
@@ -582,8 +661,9 @@ EOF
     # Extract iteration summary
     extract_iteration_summary "$CLAUDE_OUTPUT" "$agent_dir" "$i"
 
-    # Save checkpoint
+    # Save checkpoint and update run status
     save_checkpoint "$agent_dir" "$req_id" "$branch" "$i" "$prd_file"
+    write_run_status "$agent_dir" "running" "$req_id" "$i"
 
     # Validate PRD after each iteration
     if [ -f "$prd_file" ]; then
@@ -625,10 +705,17 @@ EOF
   local draft_flag=""
   [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ] && draft_flag="--draft"
 
-  if create_pr "$REQDRIVE_PROJECT_ROOT" "$req_id" "$branch" "$base_branch" "$draft_flag"; then
+  if create_pr "$REQDRIVE_PROJECT_ROOT" "$req_id" "$branch" "$base_branch" "$draft_flag" "$agent_dir"; then
     log_info "PR created successfully"
+    # Capture PR URL for run status
+    local pr_url
+    pr_url=$(gh pr view "$branch" --json url --jq '.url' 2>/dev/null || echo "")
+    write_run_status "$agent_dir" "completed" "$req_id" "${i:-0}" "0" "$pr_url"
+    run_completion_hook "$req_id" "completed" "$pr_url" "$branch" "0"
   else
     log_warn "PR creation failed. Branch available at: $branch"
+    write_run_status "$agent_dir" "failed" "$req_id" "${i:-0}" "$EXIT_PR_ERROR"
+    run_completion_hook "$req_id" "failed" "" "$branch" "$EXIT_PR_ERROR"
     exit "$EXIT_PR_ERROR"
   fi
 

@@ -12,8 +12,14 @@ create_pr() {
   local branch="$3"
   local base_branch="$4"
   local draft_flag="${5:-}"
+  local agent_dir="${6:-}"
 
-  local agent_dir="$project_root/.reqdrive/agent"
+  # Fall back to runs dir based on req slug, then legacy path
+  if [ -z "$agent_dir" ]; then
+    local req_slug
+    req_slug=$(echo "$req" | tr '[:upper:]' '[:lower:]')
+    agent_dir="$project_root/.reqdrive/runs/$req_slug"
+  fi
   local prd_file="$agent_dir/prd.json"
 
   # Push branch

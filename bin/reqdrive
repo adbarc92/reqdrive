@@ -46,8 +46,10 @@ reqdrive - Requirements to Pull Requests via AI
 Usage:
   reqdrive init              Create reqdrive.json config
   reqdrive run <REQ-ID>      Run pipeline for a requirement
+  reqdrive launch <REQ-ID>   Run pipeline detached in background
+  reqdrive status [REQ-ID]   Show run status and story completion
+  reqdrive logs <REQ-ID>     Tail output log for a run
   reqdrive validate          Validate config
-  reqdrive status            Show iteration progress and story completion
   reqdrive migrate           Add version fields to existing configs
   reqdrive plan              Generate PRD from requirement (coming soon)
   reqdrive orchestrate       Run multiple requirements in sequence (coming soon)
@@ -179,13 +181,102 @@ cmd_status() {
   source "$REQDRIVE_ROOT/lib/config.sh"
   reqdrive_load_config
 
-  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/agent"
-  local prd_file="$agent_dir/prd.json"
+  local req_slug="${1:-}"
+  local runs_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/runs"
 
   echo "═══════════════════════════════════════════════════════"
   echo "  reqdrive status"
   echo "═══════════════════════════════════════════════════════"
   echo ""
+
+  # If no specific req given, show summary of all runs
+  if [ -z "$req_slug" ]; then
+    # Check legacy dir for migration hint
+    if [ -d "$REQDRIVE_PROJECT_ROOT/.reqdrive/agent" ] && [ ! -d "$runs_dir" ]; then
+      echo "Note: Found legacy .reqdrive/agent/ directory."
+      echo "      New runs use .reqdrive/runs/<req-slug>/."
+      echo "      Previous checkpoints from --resume won't be found automatically."
+      echo ""
+    fi
+
+    if [ ! -d "$runs_dir" ]; then
+      echo "No runs found. Start one with: reqdrive run <REQ-ID>"
+      echo ""
+      return 0
+    fi
+
+    local found_any=false
+    for run_dir in "$runs_dir"/*/; do
+      [ -d "$run_dir" ] || continue
+      found_any=true
+      local slug
+      slug=$(basename "$run_dir")
+      _show_run_status "$run_dir" "$slug"
+    done
+
+    if [ "$found_any" = false ]; then
+      echo "No runs found. Start one with: reqdrive run <REQ-ID>"
+    fi
+    echo ""
+    return 0
+  fi
+
+  # Show specific run
+  req_slug=$(echo "$req_slug" | tr '[:upper:]' '[:lower:]')
+  local agent_dir="$runs_dir/$req_slug"
+
+  if [ ! -d "$agent_dir" ]; then
+    echo "No run found for '$req_slug'. Available runs:"
+    ls "$runs_dir" 2>/dev/null || echo "  (none)"
+    echo ""
+    return 1
+  fi
+
+  _show_run_status "$agent_dir" "$req_slug"
+  echo ""
+}
+
+# Internal: check if a PID is alive
+_pid_alive() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null
+}
+
+# Internal: display status for a single run directory
+_show_run_status() {
+  local agent_dir="$1"
+  local slug="$2"
+  local prd_file="$agent_dir/prd.json"
+  local run_file="$agent_dir/run.json"
+
+  # Show run lifecycle status if available
+  if [ -f "$run_file" ]; then
+    local run_status run_pid run_req started iteration exit_code pr_url
+    run_status=$(jq -r '.status // "unknown"' "$run_file")
+    run_pid=$(jq -r '.pid // ""' "$run_file")
+    run_req=$(jq -r '.req_id // ""' "$run_file")
+    started=$(jq -r '.started_at // ""' "$run_file")
+    iteration=$(jq -r '.current_iteration // 0' "$run_file")
+    exit_code=$(jq -r '.exit_code // ""' "$run_file")
+    pr_url=$(jq -r '.pr_url // ""' "$run_file")
+
+    # If status says running, verify PID is actually alive
+    local display_status="$run_status"
+    if [ "$run_status" = "running" ] && [ -n "$run_pid" ]; then
+      if ! _pid_alive "$run_pid"; then
+        display_status="crashed (PID $run_pid gone)"
+      else
+        display_status="running (PID $run_pid)"
+      fi
+    fi
+
+    echo "[$slug] $run_req — $display_status"
+    [ -n "$started" ] && echo "  Started: $started"
+    [ "$iteration" != "0" ] && echo "  Iteration: $iteration"
+    [ -n "$exit_code" ] && [ "$exit_code" != "null" ] && echo "  Exit code: $exit_code"
+    [ -n "$pr_url" ] && [ "$pr_url" != "null" ] && echo "  PR: $pr_url"
+    echo ""
+  fi
 
   # Show PRD story completion
   if [ -f "$prd_file" ]; then
@@ -204,7 +295,7 @@ cmd_status() {
     echo "  ──────── ──────  ─────────────────────────────────"
     jq -r '.userStories[] | "  \(.id)   \(if .passes then "DONE" else "TODO" end)    \(.title)"' "$prd_file"
   else
-    echo "No prd.json found. Pipeline has not been run yet."
+    echo "Run: $slug (no PRD yet)"
   fi
 
   echo ""
@@ -230,8 +321,6 @@ cmd_status() {
   else
     echo "No iteration summaries found."
   fi
-
-  echo ""
 }
 
 cmd_migrate() {
@@ -263,20 +352,25 @@ cmd_migrate() {
     fi
   fi
 
-  # Migrate prd.json if it exists
-  local prd_file="$project_root/.reqdrive/agent/prd.json"
-  if [ -f "$prd_file" ]; then
+  # Migrate prd.json files in runs directories and legacy agent dir
+  local prd_dirs=()
+  for d in "$project_root/.reqdrive/runs"/*/prd.json "$project_root/.reqdrive/agent/prd.json"; do
+    [ -f "$d" ] && prd_dirs+=("$d")
+  done
+
+  for prd_file in "${prd_dirs[@]}"; do
     local has_version
     has_version=$(jq -r '.version // empty' "$prd_file" 2>/dev/null)
+    local rel_path="${prd_file#"$project_root"/}"
     if [ -z "$has_version" ]; then
       local tmp
       tmp=$(jq --arg v "$REQDRIVE_SCHEMA_VERSION" '. + {version: $v}' "$prd_file")
       echo "$tmp" > "$prd_file"
-      echo "  Updated: .reqdrive/agent/prd.json (added version $REQDRIVE_SCHEMA_VERSION)"
+      echo "  Updated: $rel_path (added version $REQDRIVE_SCHEMA_VERSION)"
     else
-      echo "  Skipped: .reqdrive/agent/prd.json (already has version $has_version)"
+      echo "  Skipped: $rel_path (already has version $has_version)"
     fi
-  fi
+  done
 
   echo "Migration complete."
 }
@@ -299,6 +393,95 @@ cmd_orchestrate() {
   echo "Coming soon. For now, run individual requirements with 'reqdrive run <REQ-ID>'."
 }
 
+cmd_launch() {
+  local req_id="$1"
+
+  if [ -z "$req_id" ]; then
+    echo "Usage: reqdrive launch <REQ-ID>" >&2
+    echo "Starts a detached pipeline run in the background." >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  # Validate config exists before launching
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  # Normalize to slug
+  local req_slug
+  req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
+  local req_upper
+  req_upper=$(echo "$req_id" | tr '[:lower:]' '[:upper:]')
+
+  # Verify requirement file exists
+  local req_dir="$REQDRIVE_PROJECT_ROOT/$REQDRIVE_REQUIREMENTS_DIR"
+  local req_file=""
+  for f in "$req_dir/${req_upper}"*.md "$req_dir/${req_slug}"*.md; do
+    if [ -f "$f" ]; then
+      req_file="$f"
+      break
+    fi
+  done
+
+  if [ -z "$req_file" ]; then
+    echo "ERROR: No requirement file found matching ${req_upper}*.md in $req_dir" >&2
+    exit "$EXIT_CONFIG_ERROR"
+  fi
+
+  # Create run directory and output log
+  local run_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/runs/$req_slug"
+  mkdir -p "$run_dir"
+  local log_file="$run_dir/output.log"
+
+  # Check if already running
+  if [ -f "$run_dir/run.json" ]; then
+    local existing_status existing_pid
+    existing_status=$(jq -r '.status // ""' "$run_dir/run.json" 2>/dev/null)
+    existing_pid=$(jq -r '.pid // ""' "$run_dir/run.json" 2>/dev/null)
+    if [ "$existing_status" = "running" ] && [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+      echo "ERROR: $req_upper is already running (PID $existing_pid)." >&2
+      echo "Check status with: reqdrive status $req_slug" >&2
+      exit "$EXIT_GENERAL_ERROR"
+    fi
+  fi
+
+  # Launch detached
+  local reqdrive_bin="${BASH_SOURCE[0]}"
+  nohup "$reqdrive_bin" run "$req_upper" --unsafe > "$log_file" 2>&1 &
+  local bg_pid=$!
+
+  echo "Launched $req_upper (PID $bg_pid)"
+  echo "  Log: $log_file"
+  echo "  Check: reqdrive status $req_slug"
+  echo "  Tail:  reqdrive logs $req_slug"
+}
+
+cmd_logs() {
+  local req_id="$1"
+
+  if [ -z "$req_id" ]; then
+    echo "Usage: reqdrive logs <REQ-ID>" >&2
+    echo "Tails the output log for a run." >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  local req_slug
+  req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
+  local log_file="$REQDRIVE_PROJECT_ROOT/.reqdrive/runs/$req_slug/output.log"
+
+  if [ ! -f "$log_file" ]; then
+    echo "No log file found at: $log_file" >&2
+    echo "Has the run been launched? Try: reqdrive launch $req_id" >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  echo "Tailing $log_file (Ctrl+C to stop)..."
+  echo ""
+  tail -f "$log_file"
+}
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
@@ -313,7 +496,8 @@ case "${1:-}" in
     cmd_validate
     ;;
   status)
-    cmd_status
+    shift
+    cmd_status "$@"
     ;;
   migrate)
     cmd_migrate
@@ -323,6 +507,14 @@ case "${1:-}" in
     ;;
   orchestrate)
     cmd_orchestrate
+    ;;
+  launch)
+    shift
+    cmd_launch "${1:-}"
+    ;;
+  logs)
+    shift
+    cmd_logs "${1:-}"
     ;;
   -v|--version)
     echo "reqdrive $VERSION"

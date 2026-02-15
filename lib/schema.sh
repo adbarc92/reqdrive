@@ -74,7 +74,8 @@ validate_config_schema() {
       if has("testCommand") and (.testCommand | type) != "string" then "testCommand must be a string" else empty end,
       if has("projectName") and (.projectName | type) != "string" then "projectName must be a string" else empty end,
       if has("maxIterations") and (.maxIterations | type) != "number" then "maxIterations must be a number" else empty end,
-      if has("prLabels") and (.prLabels | type) != "array" then "prLabels must be an array" else empty end
+      if has("prLabels") and (.prLabels | type) != "array" then "prLabels must be an array" else empty end,
+      if has("completionHook") and (.completionHook | type) != "string" then "completionHook must be a string" else empty end
     ] | .[]
   ' "$file" 2>/dev/null)
 

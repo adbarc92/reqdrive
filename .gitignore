@@ -1,0 +1,5 @@
+# reqdrive run state (per-requirement agent directories)
+.reqdrive/runs/
+
+# Legacy agent state directory
+.reqdrive/agent/

@@ -6,5 +6,6 @@
   "maxIterations": 10,
   "baseBranch": "main",
   "prLabels": ["agent-generated"],
-  "projectName": "My Project"
+  "projectName": "My Project",
+  "completionHook": ""
 }

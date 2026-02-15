@@ -68,6 +68,10 @@ reqdrive_load_config() {
   # Optional: project name for PR titles
   export REQDRIVE_PROJECT_NAME
   REQDRIVE_PROJECT_NAME="$(jq -r '.projectName // ""' "$manifest")"
+
+  # Optional: shell command to run on pipeline completion
+  export REQDRIVE_COMPLETION_HOOK
+  REQDRIVE_COMPLETION_HOOK="$(jq -r '.completionHook // ""' "$manifest")"
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────
