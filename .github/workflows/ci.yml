@@ -22,8 +22,26 @@ jobs:
       - name: Lint lib/
         run: shellcheck lib/*.sh
 
+      - name: Lint install.sh
+        run: shellcheck install.sh
+
       - name: Lint test scripts
         run: shellcheck tests/simple-test.sh tests/run-tests.sh
+
+  syntax-check:
+    name: Bash syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check bin/reqdrive
+        run: bash -n bin/reqdrive
+
+      - name: Syntax check lib/*.sh
+        run: for f in lib/*.sh; do bash -n "$f"; done
+
+      - name: Syntax check install.sh
+        run: bash -n install.sh
 
   test-simple:
     name: Tests (simple runner)

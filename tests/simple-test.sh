@@ -1219,6 +1219,502 @@ else
 fi
 
 echo ""
+echo "--- Run State: write_run_status ---"
+
+# Test: write_run_status creates valid run.json with all fields
+(
+  mkdir -p "$TEST_TEMP/run-state"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  write_run_status "$TEST_TEMP/run-state" "running" "REQ-01"
+  [ -f "$TEST_TEMP/run-state/run.json" ] &&
+  jq -r '.status' "$TEST_TEMP/run-state/run.json" | grep -q "running" &&
+  jq -r '.req_id' "$TEST_TEMP/run-state/run.json" | grep -q "REQ-01" &&
+  jq -r '.pid' "$TEST_TEMP/run-state/run.json" | grep -q "[0-9]" &&
+  jq -r '.started_at' "$TEST_TEMP/run-state/run.json" | grep -q "."
+)
+test_result "run_status: creates valid run.json with all fields" $?
+
+# Test: write_run_status preserves started_at on subsequent calls
+(
+  mkdir -p "$TEST_TEMP/run-state2"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  write_run_status "$TEST_TEMP/run-state2" "running" "REQ-01"
+  first_started=$(jq -r '.started_at' "$TEST_TEMP/run-state2/run.json")
+
+  sleep 1
+  write_run_status "$TEST_TEMP/run-state2" "completed" "REQ-01" "5" "0"
+  second_started=$(jq -r '.started_at' "$TEST_TEMP/run-state2/run.json")
+
+  [ "$first_started" = "$second_started" ]
+)
+test_result "run_status: preserves started_at on subsequent calls" $?
+
+# Test: write_run_status records current PID
+(
+  mkdir -p "$TEST_TEMP/run-state3"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  write_run_status "$TEST_TEMP/run-state3" "running" "REQ-01"
+  recorded_pid=$(jq -r '.pid' "$TEST_TEMP/run-state3/run.json")
+  [ "$recorded_pid" = "$$" ]
+)
+test_result "run_status: records current PID" $?
+
+echo ""
+echo "--- Checkpoint: save/load ---"
+
+# Test: save_checkpoint creates valid checkpoint.json
+(
+  mkdir -p "$TEST_TEMP/cp-test"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  # Create a mock PRD
+  cat > "$TEST_TEMP/cp-test/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":true},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":false}
+]}
+PRDEOF
+
+  save_checkpoint "$TEST_TEMP/cp-test" "REQ-01" "reqdrive/req-01" 3 "$TEST_TEMP/cp-test/prd.json" 2>/dev/null
+  [ -f "$TEST_TEMP/cp-test/checkpoint.json" ] &&
+  jq -r '.req_id' "$TEST_TEMP/cp-test/checkpoint.json" | grep -q "REQ-01" &&
+  jq -r '.branch' "$TEST_TEMP/cp-test/checkpoint.json" | grep -q "reqdrive/req-01" &&
+  [ "$(jq -r '.iteration' "$TEST_TEMP/cp-test/checkpoint.json")" = "3" ]
+)
+test_result "checkpoint: save_checkpoint creates valid checkpoint.json" $?
+
+# Test: save_checkpoint records completed story IDs
+(
+  mkdir -p "$TEST_TEMP/cp-test2"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/cp-test2/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":true},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":false}
+]}
+PRDEOF
+
+  save_checkpoint "$TEST_TEMP/cp-test2" "REQ-01" "reqdrive/req-01" 2 "$TEST_TEMP/cp-test2/prd.json" 2>/dev/null
+  jq -r '.stories_complete[0]' "$TEST_TEMP/cp-test2/checkpoint.json" | grep -q "US-001" &&
+  [ "$(jq '.stories_complete | length' "$TEST_TEMP/cp-test2/checkpoint.json")" = "1" ]
+)
+test_result "checkpoint: records completed story IDs from PRD" $?
+
+# Test: load_checkpoint returns path for matching req_id
+(
+  mkdir -p "$TEST_TEMP/cp-load"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/cp-load/checkpoint.json" <<'CPEOF'
+{"version":"0.3.0","req_id":"REQ-01","branch":"reqdrive/req-01","iteration":2,"timestamp":"2026-01-01T00:00:00+00:00"}
+CPEOF
+
+  result=$(load_checkpoint "$TEST_TEMP/cp-load" "REQ-01" 2>/dev/null)
+  [ -n "$result" ] && [[ "$result" == *"checkpoint.json" ]]
+)
+test_result "checkpoint: load returns path for matching req_id" $?
+
+# Test: load_checkpoint returns empty for mismatched req_id
+(
+  mkdir -p "$TEST_TEMP/cp-load2"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/cp-load2/checkpoint.json" <<'CPEOF'
+{"version":"0.3.0","req_id":"REQ-01","branch":"reqdrive/req-01","iteration":2,"timestamp":"2026-01-01T00:00:00+00:00"}
+CPEOF
+
+  result=$(load_checkpoint "$TEST_TEMP/cp-load2" "REQ-99" 2>/dev/null)
+  [ -z "$result" ]
+)
+test_result "checkpoint: load returns empty for mismatched req_id" $?
+
+# Test: load_checkpoint returns empty for missing file
+(
+  mkdir -p "$TEST_TEMP/cp-load3"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  result=$(load_checkpoint "$TEST_TEMP/cp-load3" "REQ-01" 2>/dev/null)
+  [ -z "$result" ]
+)
+test_result "checkpoint: load returns empty for missing file" $?
+
+echo ""
+echo "--- Story Selection ---"
+
+# Test: select_next_story returns lowest-priority incomplete story
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":true},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":false},
+  {"id":"US-003","title":"C","acceptanceCriteria":["c"],"priority":3,"passes":false}
+]}
+PRDEOF
+
+  result=$(select_next_story "$TEST_TEMP/story-prd.json")
+  [ "$result" = "US-002" ]
+)
+test_result "story: select_next_story returns lowest-priority incomplete" $?
+
+# Test: select_next_story returns empty when all stories pass
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-done.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":true},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":true}
+]}
+PRDEOF
+
+  result=$(select_next_story "$TEST_TEMP/story-done.json")
+  [ -z "$result" ]
+)
+test_result "story: select_next_story returns empty when all pass" $?
+
+# Test: select_next_story returns empty when no PRD file
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  result=$(select_next_story "$TEST_TEMP/nonexistent-prd.json")
+  [ -z "$result" ]
+)
+test_result "story: select_next_story returns empty for missing PRD" $?
+
+# Test: get_story_details returns correct story JSON by ID
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-detail.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"First Story","acceptanceCriteria":["a"],"priority":1,"passes":false},
+  {"id":"US-002","title":"Second Story","acceptanceCriteria":["b"],"priority":2,"passes":false}
+]}
+PRDEOF
+
+  result=$(get_story_details "$TEST_TEMP/story-detail.json" "US-002")
+  echo "$result" | jq -r '.title' | grep -q "Second Story"
+)
+test_result "story: get_story_details returns correct story by ID" $?
+
+echo ""
+echo "--- Prompt Builders ---"
+
+# Test: build_planning_prompt creates file containing requirement content
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  build_planning_prompt "$TEST_TEMP/plan-prompt.md" "This is the requirement content."
+  [ -f "$TEST_TEMP/plan-prompt.md" ] &&
+  grep -q "This is the requirement content" "$TEST_TEMP/plan-prompt.md"
+)
+test_result "prompt: build_planning_prompt includes requirement content" $?
+
+# Test: build_planning_prompt includes PRD schema in output
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  build_planning_prompt "$TEST_TEMP/plan-prompt2.md" "Requirement."
+  grep -q "PRD Schema" "$TEST_TEMP/plan-prompt2.md" &&
+  grep -q "userStories" "$TEST_TEMP/plan-prompt2.md"
+)
+test_result "prompt: build_planning_prompt includes PRD schema" $?
+
+# Test: build_planning_prompt uses quoted heredoc (safe)
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  # The planning prompt uses a quoted heredoc, so $HOME should NOT be expanded
+  build_planning_prompt "$TEST_TEMP/plan-prompt3.md" "Check \$HOME variable"
+  grep -q '\$HOME' "$TEST_TEMP/plan-prompt3.md"
+)
+test_result "prompt: build_planning_prompt preserves dollar signs in content" $?
+
+echo ""
+echo "--- Completion Hook ---"
+
+# Test: run_completion_hook executes command with env vars
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  export REQDRIVE_COMPLETION_HOOK="echo \$REQ_ID \$STATUS \$PR_URL \$BRANCH \$EXIT_CODE > $TEST_TEMP/hook-out.txt"
+  output=$(run_completion_hook "REQ-01" "completed" "https://pr.url" "reqdrive/req-01" "0" 2>/dev/null)
+  cat "$TEST_TEMP/hook-out.txt" | grep -q "REQ-01" &&
+  cat "$TEST_TEMP/hook-out.txt" | grep -q "completed" &&
+  cat "$TEST_TEMP/hook-out.txt" | grep -q "https://pr.url"
+)
+test_result "hook: executes command with env vars" $?
+
+# Test: run_completion_hook is no-op when hook is empty
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  export REQDRIVE_COMPLETION_HOOK=""
+  run_completion_hook "REQ-01" "completed" "" "" "0" 2>/dev/null
+  # Should succeed silently
+)
+test_result "hook: no-op when hook is empty" $?
+
+# Test: run_completion_hook handles failing hook gracefully
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  export REQDRIVE_COMPLETION_HOOK="exit 42"
+  # Should not propagate the failure (run.sh logs warning but continues)
+  run_completion_hook "REQ-01" "failed" "" "" "5" 2>/dev/null
+)
+test_result "hook: handles failing hook gracefully" $?
+
+echo ""
+echo "--- CLI Commands ---"
+
+# Test: status with no runs shows "No runs found"
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  mkdir -p docs/requirements
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" status 2>&1)
+  echo "$output" | grep -q "No runs found"
+)
+test_result "cli: status with no runs shows 'No runs found'" $?
+
+# Test: status with run.json shows status fields
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  mkdir -p docs/requirements
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  mkdir -p .reqdrive/runs/req-01
+  cat > .reqdrive/runs/req-01/run.json <<'REOF'
+{"status":"completed","pid":12345,"req_id":"REQ-01","started_at":"2026-01-01T00:00:00","updated_at":"2026-01-01T01:00:00","current_iteration":3,"exit_code":0,"pr_url":"https://github.com/test/pr/1"}
+REOF
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" status 2>&1)
+  echo "$output" | grep -q "REQ-01" &&
+  echo "$output" | grep -q "completed"
+)
+test_result "cli: status with run.json shows status fields" $?
+
+# Test: logs with missing log file shows error
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  mkdir -p docs/requirements
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" logs REQ-01 2>&1) || true
+  echo "$output" | grep -q "No log file found"
+)
+test_result "cli: logs with missing log file shows error" $?
+
+# Test: migrate adds version to versionless config
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  cat > reqdrive.json <<'EOF'
+{"requirementsDir":"docs/requirements"}
+EOF
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" migrate 2>&1)
+  echo "$output" | grep -q "Updated: reqdrive.json" &&
+  jq -r '.version' reqdrive.json | grep -q "0.3.0"
+)
+test_result "cli: migrate adds version to versionless config" $?
+
+# Test: migrate skips config that already has version
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" migrate 2>&1)
+  echo "$output" | grep -q "Skipped: reqdrive.json"
+)
+test_result "cli: migrate skips config that already has version" $?
+
+# Test: plan and orchestrate show "coming soon" stubs
+(
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" plan 2>&1)
+  echo "$output" | grep -qi "coming soon" &&
+  output=$("$REQDRIVE_ROOT/bin/reqdrive" orchestrate 2>&1)
+  echo "$output" | grep -qi "coming soon"
+)
+test_result "cli: plan and orchestrate show 'coming soon'" $?
+
+echo ""
+echo "--- Preflight: Missing Coverage ---"
+
+# Test: check_base_branch_exists passes when branch exists locally
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  git init -q
+  git config user.email "test@test.com"
+  git config user.name "Test"
+  touch f.txt && git add f.txt && git commit -q -m "init"
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  check_base_branch_exists "$(git branch --show-current)" 2>/dev/null
+)
+test_result "preflight: check_base_branch_exists passes for local branch" $?
+
+# Test: check_requirements_dir passes when dir exists with .md files
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/docs/requirements"
+  echo "# REQ" > "$tmpdir/docs/requirements/REQ-01-test.md"
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  check_requirements_dir "$tmpdir/docs/requirements" 2>/dev/null
+)
+test_result "preflight: check_requirements_dir passes with .md files" $?
+
+# Test: check_requirement_exists finds matching requirement file
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/docs/requirements"
+  echo "# REQ" > "$tmpdir/docs/requirements/REQ-01-test-feature.md"
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  check_requirement_exists "REQ-01" "$tmpdir/docs/requirements" 2>/dev/null
+)
+test_result "preflight: check_requirement_exists finds matching file" $?
+
+echo ""
+echo "--- Init Verification ---"
+
+# Test: init creates reqdrive.json with version 0.3.0
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  # Pipe answers to interactive prompts (4 read calls: req_dir, test_cmd, base_branch, project_name)
+  printf '\n\n\n\n' | source "$REQDRIVE_ROOT/lib/init.sh" >/dev/null 2>&1
+  [ -f "$tmpdir/reqdrive.json" ] &&
+  jq -r '.version' "$tmpdir/reqdrive.json" | grep -q "0.3.0"
+)
+test_result "init: creates reqdrive.json with version 0.3.0" $?
+
+# Test: init creates .reqdrive/runs/ directory
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  printf '\n\n\n\n' | source "$REQDRIVE_ROOT/lib/init.sh" >/dev/null 2>&1
+  [ -d "$tmpdir/.reqdrive/runs" ]
+)
+test_result "init: creates .reqdrive/runs/ directory" $?
+
+echo ""
 echo "========================================"
 echo "  Results: $PASS passed, $FAIL failed, $SKIP skipped, $TOTAL total"
 echo "========================================"

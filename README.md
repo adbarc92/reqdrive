@@ -2,9 +2,9 @@
 
 Requirements-driven development pipeline. Automates the flow from requirements documents to pull requests using AI agents.
 
-## Version 0.2.0
+## Version 0.3.0
 
-This version uses a simplified "Ralph pattern" architecture with a single-loop agent execution model.
+Uses a two-phase architecture: planning (PRD generation) followed by deterministic story-by-story implementation.
 
 ## How It Works
 
@@ -19,7 +19,7 @@ This version uses a simplified "Ralph pattern" architecture with a single-loop a
 - `jq`
 - `git`
 - `gh` (GitHub CLI, authenticated)
-- `claude` (Claude Code CLI)
+- `claude` (Claude Code CLI — only needed for `run`/`launch` commands)
 
 **Windows Users:** reqdrive requires a Bash environment. Use Git Bash or WSL2.
 
@@ -46,28 +46,42 @@ reqdrive run REQ-01   # Run pipeline for a requirement
 |---------|-------------|
 | `reqdrive init` | Create `reqdrive.json` configuration and directories |
 | `reqdrive run <REQ-ID>` | Run the pipeline for a specific requirement |
+| `reqdrive launch <REQ-ID>` | Run pipeline detached in background (`--unsafe` mode) |
+| `reqdrive status [REQ-ID]` | Show run status and story completion |
+| `reqdrive logs <REQ-ID>` | Tail output log for a background run |
 | `reqdrive validate` | Validate the configuration file |
+| `reqdrive migrate` | Add version fields to pre-0.3.0 configs/PRDs |
 | `reqdrive --version` | Show version |
 | `reqdrive --help` | Show help |
 
-## Configuration (`reqdrive.json`)
+### Run Options
 
-The configuration is minimal with sensible defaults:
+| Flag | Description |
+|------|-------------|
+| `-i`, `--interactive` | Run in interactive mode (default, safer) |
+| `--unsafe` | Skip permission prompts (`--dangerously-skip-permissions`) |
+| `--force` | Skip pre-flight checks |
+| `--resume` | Resume from last checkpoint |
+
+## Configuration (`reqdrive.json`)
 
 ```json
 {
+  "version": "0.3.0",
   "requirementsDir": "docs/requirements",
   "testCommand": "npm test",
   "model": "claude-sonnet-4-20250514",
   "maxIterations": 10,
   "baseBranch": "main",
   "prLabels": ["agent-generated"],
-  "projectName": "My Project"
+  "projectName": "My Project",
+  "completionHook": ""
 }
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
+| `version` | `"0.3.0"` | Schema version |
 | `requirementsDir` | `docs/requirements` | Directory containing `REQ-*.md` files |
 | `testCommand` | (none) | Command to run tests |
 | `model` | `claude-sonnet-4-20250514` | Claude model to use |
@@ -75,6 +89,7 @@ The configuration is minimal with sensible defaults:
 | `baseBranch` | `main` | Base branch for feature branches |
 | `prLabels` | `["agent-generated"]` | Labels to add to PRs |
 | `projectName` | (none) | Project name for PR titles |
+| `completionHook` | (none) | Shell command executed when pipeline completes |
 
 ## Project Layout
 
@@ -87,11 +102,14 @@ your-project/
 │   ├── REQ-01-auth.md
 │   └── REQ-02-dashboard.md
 └── .reqdrive/
-    └── agent/                 # Agent state (gitignore recommended)
-        ├── prompt.md          # Generated prompt
-        ├── prd.json           # Generated PRD
-        ├── progress.txt       # Progress log
-        └── iteration-*.log    # Iteration logs
+    └── runs/
+        └── <req-slug>/        # Per-requirement run state (gitignore recommended)
+            ├── run.json       # Lifecycle status, PID, timestamps, PR URL
+            ├── prd.json       # Generated PRD with user stories
+            ├── checkpoint.json # Resume state
+            ├── prompt.md      # Current iteration prompt
+            ├── progress.txt   # Agent progress log
+            └── iteration-*.log # Raw agent output per iteration
 ```
 
 ## Writing Requirements
@@ -114,62 +132,53 @@ Implement user login and registration.
 
 When you run `reqdrive run REQ-01`:
 
-1. **Branch Creation** — Creates `reqdrive/req-01` branch from base branch
-2. **Agent Loop** — Iterates until all stories complete:
-   - If no PRD exists, agent creates one with user stories
-   - Agent implements the next incomplete story
-   - Agent runs tests and commits changes
-   - Agent marks story as complete
-   - When all stories pass, agent outputs completion signal
-3. **PR Creation** — Creates GitHub PR with validation checklist
-
-## Agent Behavior
-
-The agent (Claude Code) receives a prompt with the requirement embedded and:
-
-1. Creates a PRD (`prd.json`) with user stories if one doesn't exist
-2. Picks the highest-priority incomplete story
-3. Implements the story and runs tests
-4. Commits with format: `feat: [US-001] - Story Title`
-5. Updates PRD to mark story as complete
-6. Outputs `<promise>COMPLETE</promise>` when all stories are done
+1. **Pre-flight checks** — Clean working tree, base branch exists, requirement file found
+2. **Branch creation** — Creates `reqdrive/req-01` from base branch
+3. **Phase 1: Planning** — Agent creates `prd.json` with user stories (up to 2 attempts)
+4. **Phase 2: Implementation** — One Claude invocation per story, deterministic selection by priority
+5. **PR creation** — Push branch, create GitHub PR with validation checklist from PRD
 
 ## Security
 
-This version uses `--dangerously-skip-permissions` mode by default, which grants the AI agent unrestricted system access.
+By default, reqdrive runs in **interactive mode**, which prompts for permission on sensitive operations. Use `--unsafe` to grant the agent unrestricted access (required for `launch`).
 
-**Only run reqdrive in:**
+**Only run in `--unsafe` mode in:**
 - Sandboxed environments (containers, VMs)
 - Projects where you trust the codebase
 - Systems without sensitive credentials
+
+Requirement content is scanned for dangerous patterns (shell injection, path traversal). PRD-derived fields are sanitized before prompt expansion.
 
 ## Testing
 
 ```bash
 # Run simple tests (no external dependencies)
-./tests/simple-test.sh
+bash tests/simple-test.sh
 
 # Run full test suite (requires bats-core)
-./tests/run-tests.sh
+bash tests/run-tests.sh
 ```
 
 ## Project Structure
 
 ```
 reqdrive/
-├── bin/reqdrive         # CLI entry point (103 lines)
+├── bin/reqdrive         # CLI entry point
 ├── lib/
-│   ├── config.sh        # Configuration loading (78 lines)
-│   ├── init.sh          # Interactive setup (95 lines)
-│   ├── run.sh           # Core Ralph loop (245 lines)
-│   ├── pr-create.sh     # PR creation (110 lines)
-│   └── validate.sh      # Config validation (59 lines)
+│   ├── config.sh        # Configuration loading
+│   ├── errors.sh        # Exit codes and error helpers
+│   ├── init.sh          # Interactive setup wizard
+│   ├── preflight.sh     # Pre-run safety checks
+│   ├── run.sh           # Core pipeline: planning + implementation
+│   ├── pr-create.sh     # PR creation with validation checklist
+│   ├── sanitize.sh      # Input sanitization
+│   ├── schema.sh        # Schema version checking + JSON validation
+│   └── validate.sh      # Config validation command
 ├── templates/           # Template files
 ├── tests/               # Test suite
+├── skills/              # Claude Code skills
 └── archive/             # Archived v0.1.x code
 ```
-
-Total: ~590 lines of code.
 
 ## Archived v0.1.x Features
 
@@ -177,9 +186,6 @@ The following features from v0.1.x are archived and may return in future version
 
 - Parallel execution with git worktrees
 - Dependency ordering for multi-requirement runs
-- Separate PRD generation step
-- Interactive security mode with permission prompts
-- Status and clean commands
 
 See `archive/v1-complex/` for the original implementation.
 
