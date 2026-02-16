@@ -1690,6 +1690,127 @@ test_result "preflight: check_requirements_dir passes with .md files" $?
 test_result "preflight: check_requirement_exists finds matching file" $?
 
 echo ""
+echo "--- PR Creation ---"
+
+# Test: create_pr outputs URL to stdout (captured by caller)
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+
+  # Mock gh and git
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          create) echo "https://github.com/test/repo/pull/42" ;;
+          view) echo "https://github.com/test/repo/pull/42" ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  git() {
+    case "$1" in
+      push) return 0 ;;
+      log) echo "abc1234 feat: test" ;;
+    esac
+  }
+  export -f gh git
+
+  source "$REQDRIVE_ROOT/lib/pr-create.sh"
+
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/.reqdrive/runs/req-01"
+  export REQDRIVE_PR_LABELS=""
+
+  output=$(create_pr "$tmpdir" "REQ-01" "reqdrive/req-01" "main" "" "$tmpdir/.reqdrive/runs/req-01" 2>/dev/null)
+  echo "$output" | grep -q "https://github.com/test/repo/pull/42"
+)
+test_result "pr: create_pr outputs URL to stdout" $?
+
+# Test: create_pr retries without labels when gh pr create fails with labels
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/.reqdrive/runs/req-01"
+
+  # Use file-based counter (command substitution creates subshells that lose variable state)
+  echo "0" > "$tmpdir/.attempt"
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          create)
+            local attempt
+            attempt=$(cat "$tmpdir/.attempt")
+            attempt=$((attempt + 1))
+            echo "$attempt" > "$tmpdir/.attempt"
+            # Fail on first attempt (with labels), succeed on second (without)
+            if [ "$attempt" -eq 1 ]; then
+              return 1
+            fi
+            echo "https://github.com/test/repo/pull/99"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  git() {
+    case "$1" in
+      push) return 0 ;;
+      log) echo "abc1234 feat: test" ;;
+    esac
+  }
+  export -f gh git
+
+  source "$REQDRIVE_ROOT/lib/pr-create.sh"
+
+  export REQDRIVE_PR_LABELS="nonexistent-label"
+
+  output=$(create_pr "$tmpdir" "REQ-01" "reqdrive/req-01" "main" "" "$tmpdir/.reqdrive/runs/req-01" 2>/dev/null)
+  echo "$output" | grep -q "https://github.com/test/repo/pull/99"
+)
+test_result "pr: create_pr retries without labels on failure" $?
+
+# Test: create_pr returns non-zero when gh pr create fails without labels
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          create) return 1 ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  git() {
+    case "$1" in
+      push) return 0 ;;
+      log) echo "abc1234 feat: test" ;;
+    esac
+  }
+  export -f gh git
+
+  source "$REQDRIVE_ROOT/lib/pr-create.sh"
+
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/.reqdrive/runs/req-01"
+  export REQDRIVE_PR_LABELS=""
+
+  # Should fail since no labels to retry without — use ! to invert for set -e
+  ! create_pr "$tmpdir" "REQ-01" "reqdrive/req-01" "main" "" "$tmpdir/.reqdrive/runs/req-01" 2>/dev/null
+)
+test_result "pr: create_pr returns non-zero on gh failure without labels" $?
+
+echo ""
 echo "--- Init Verification ---"
 
 # Test: init creates reqdrive.json with version 0.3.0

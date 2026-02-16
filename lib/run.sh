@@ -705,11 +705,9 @@ EOF
   local draft_flag=""
   [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ] && draft_flag="--draft"
 
-  if create_pr "$REQDRIVE_PROJECT_ROOT" "$req_id" "$branch" "$base_branch" "$draft_flag" "$agent_dir"; then
+  local pr_url=""
+  if pr_url=$(create_pr "$REQDRIVE_PROJECT_ROOT" "$req_id" "$branch" "$base_branch" "$draft_flag" "$agent_dir"); then
     log_info "PR created successfully"
-    # Capture PR URL for run status
-    local pr_url
-    pr_url=$(gh pr view "$branch" --json url --jq '.url' 2>/dev/null || echo "")
     write_run_status "$agent_dir" "completed" "$req_id" "${i:-0}" "0" "$pr_url"
     run_completion_hook "$req_id" "completed" "$pr_url" "$branch" "0"
   else
