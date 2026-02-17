@@ -51,7 +51,7 @@ Usage:
   reqdrive logs <REQ-ID>     Tail output log for a run
   reqdrive validate          Validate config
   reqdrive migrate           Add version fields to existing configs
-  reqdrive plan              Generate PRD from requirement (coming soon)
+  reqdrive plan <REQ-ID>     Generate PRD from requirement (plan only)
   reqdrive orchestrate       Run multiple requirements in sequence (coming soon)
 
 Run Options:
@@ -376,12 +376,49 @@ cmd_migrate() {
 }
 
 cmd_plan() {
-  echo "reqdrive plan - Generate and validate PRD from requirement"
-  echo ""
-  echo "This command will analyze a requirement file and generate a structured"
-  echo "PRD (Product Requirements Document) before running the agent pipeline."
-  echo ""
-  echo "Coming soon. For now, the agent generates the PRD during 'reqdrive run'."
+  check_claude
+
+  local req_id=""
+  export REQDRIVE_INTERACTIVE="true"
+  export REQDRIVE_FORCE="false"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --unsafe|--dangerously-skip-permissions)
+        REQDRIVE_INTERACTIVE="false"
+        shift
+        ;;
+      --force)
+        REQDRIVE_FORCE="true"
+        shift
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        exit "$EXIT_GENERAL_ERROR"
+        ;;
+      *)
+        if [ -z "$req_id" ]; then
+          req_id="$1"
+        else
+          echo "Unexpected argument: $1" >&2
+          exit "$EXIT_GENERAL_ERROR"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$req_id" ]; then
+    echo "Usage: reqdrive plan <REQ-ID> [--unsafe] [--force]" >&2
+    echo "Generate a PRD from a requirement file without running implementation." >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+
+  source "$REQDRIVE_ROOT/lib/run.sh"
+  run_plan "$req_id"
 }
 
 cmd_orchestrate() {
@@ -503,7 +540,8 @@ case "${1:-}" in
     cmd_migrate
     ;;
   plan)
-    cmd_plan
+    shift
+    cmd_plan "$@"
     ;;
   orchestrate)
     cmd_orchestrate

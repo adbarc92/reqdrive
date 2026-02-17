@@ -69,6 +69,10 @@ reqdrive_load_config() {
   export REQDRIVE_PROJECT_NAME
   REQDRIVE_PROJECT_NAME="$(jq -r '.projectName // ""' "$manifest")"
 
+  # Optional: max retries per story before skipping (default 3)
+  export REQDRIVE_MAX_STORY_RETRIES
+  REQDRIVE_MAX_STORY_RETRIES="$(jq -r '.maxStoryRetries // 3' "$manifest")"
+
   # Optional: shell command to run on pipeline completion
   export REQDRIVE_COMPLETION_HOOK
   REQDRIVE_COMPLETION_HOOK="$(jq -r '.completionHook // ""' "$manifest")"

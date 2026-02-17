@@ -76,6 +76,9 @@ save_checkpoint() {
     stories_complete=$(jq '[.userStories[] | select(.passes == true) | .id]' "$prd_file" 2>/dev/null || echo "[]")
   fi
 
+  local commit_sha
+  commit_sha=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+
   cat > "$checkpoint_file" <<EOF
 {
   "version": "0.3.0",
@@ -84,7 +87,8 @@ save_checkpoint() {
   "iteration": $iteration,
   "timestamp": "$(date -Iseconds)",
   "prd_exists": $prd_exists,
-  "stories_complete": $stories_complete
+  "stories_complete": $stories_complete,
+  "last_commit_sha": "$commit_sha"
 }
 EOF
 
@@ -117,6 +121,17 @@ load_checkpoint() {
     log_warn "Checkpoint is for different requirement ($checkpoint_req), ignoring"
     echo ""
     return 0
+  fi
+
+  # Verify git state matches checkpoint
+  local checkpoint_sha
+  checkpoint_sha=$(jq -r '.last_commit_sha // empty' "$checkpoint_file" 2>/dev/null)
+  if [ -n "$checkpoint_sha" ] && [ "$checkpoint_sha" != "unknown" ]; then
+    local current_sha
+    current_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$current_sha" ] && [ "$checkpoint_sha" != "$current_sha" ]; then
+      log_warn "Git state diverged from checkpoint (expected $checkpoint_sha, got $current_sha)"
+    fi
   fi
 
   echo "$checkpoint_file"
@@ -331,6 +346,7 @@ PROMPT_IMPL
 # Prints the story ID, or empty string if all complete
 select_next_story() {
   local prd_file="$1"
+  local max_retries="${2:-3}"
 
   if [ ! -f "$prd_file" ]; then
     echo ""
@@ -338,8 +354,8 @@ select_next_story() {
   fi
 
   local story_id
-  story_id=$(jq -r '
-    [.userStories[] | select(.passes == false)]
+  story_id=$(jq -r --argjson max "$max_retries" '
+    [.userStories[] | select(.passes == false and ((.attempts // 0) < $max))]
     | sort_by(.priority)
     | first
     | .id // empty
@@ -420,30 +436,31 @@ run_completion_hook() {
     bash -c "$hook" 2>&1 || log_warn "Completion hook exited with code $?"
 }
 
-# ── Main Pipeline ────────────────────────────────────────────────────────────
+# ── Pipeline Setup (shared by run_pipeline and run_plan) ─────────────────
 
-run_pipeline() {
-  local req_id="$1"
+# Sets up common pipeline variables. After calling, the following variables
+# are set in the caller's scope (must be declared local before calling):
+#   req_id, req_slug, req_dir, branch, base_branch, agent_dir,
+#   req_file, requirement_content, sanitized_content,
+#   prompt_file, progress_file, prd_file, model
+pipeline_setup() {
+  local caller_req_id="$1"
 
-  if [ -z "$req_id" ]; then
-    echo "Usage: reqdrive run <REQ-ID>" >&2
-    exit "$EXIT_GENERAL_ERROR"
+  if [ -z "$caller_req_id" ]; then
+    return 1
   fi
 
   # Normalize to uppercase
-  req_id=$(echo "$req_id" | tr '[:lower:]' '[:upper:]')
-  local req_slug
+  req_id=$(echo "$caller_req_id" | tr '[:lower:]' '[:upper:]')
   req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
 
-  log_info "Starting pipeline for $req_id"
+  # Setup paths
+  req_dir="$REQDRIVE_PROJECT_ROOT/$REQDRIVE_REQUIREMENTS_DIR"
+  branch="reqdrive/$req_slug"
+  base_branch="${REQDRIVE_BASE_BRANCH:-main}"
+  agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/runs/$req_slug"
 
-  # ── Setup paths ──
-  local req_dir="$REQDRIVE_PROJECT_ROOT/$REQDRIVE_REQUIREMENTS_DIR"
-  local branch="reqdrive/$req_slug"
-  local base_branch="${REQDRIVE_BASE_BRANCH:-main}"
-  local agent_dir="$REQDRIVE_PROJECT_ROOT/.reqdrive/runs/$req_slug"
-
-  # ── Run pre-flight checks ──
+  # Run pre-flight checks
   if [ "${REQDRIVE_FORCE:-false}" = "true" ]; then
     log_warn "Skipping pre-flight checks (--force flag used)"
   else
@@ -452,9 +469,8 @@ run_pipeline() {
     fi
   fi
 
-  # ── Find requirement file ──
-  local req_file=""
-
+  # Find requirement file
+  req_file=""
   for f in "$req_dir/${req_id}"*.md "$req_dir/${req_slug}"*.md; do
     if [ -f "$f" ]; then
       req_file="$f"
@@ -469,8 +485,7 @@ run_pipeline() {
 
   log_info "Requirement: $req_file"
 
-  # ── Validate requirement content ──
-  local requirement_content
+  # Validate requirement content
   requirement_content=$(cat "$req_file")
 
   if ! validate_requirement_content "$requirement_content"; then
@@ -480,8 +495,150 @@ run_pipeline() {
     log_warn "Continuing despite suspicious content (--force flag used)"
   fi
 
-  # ── Check for resume ──
+  # Setup agent directory
   mkdir -p "$agent_dir"
+
+  # Agent file paths
+  prompt_file="$agent_dir/prompt.md"
+  progress_file="$agent_dir/progress.txt"
+  prd_file="$agent_dir/prd.json"
+  model="${REQDRIVE_MODEL:-claude-sonnet-4-20250514}"
+
+  # Sanitize the requirement content before embedding in prompts
+  sanitized_content=$(sanitize_for_prompt "$requirement_content")
+}
+
+# ── Plan-Only Pipeline ───────────────────────────────────────────────────
+
+run_plan() {
+  local input_req_id="$1"
+
+  if [ -z "$input_req_id" ]; then
+    echo "Usage: reqdrive plan <REQ-ID>" >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  # Shared setup
+  local req_id req_slug req_dir branch base_branch agent_dir
+  local req_file requirement_content sanitized_content
+  local prompt_file progress_file prd_file model
+  pipeline_setup "$input_req_id"
+
+  log_info "Starting plan-only mode for $req_id"
+
+  # If PRD already exists, print summary and exit
+  if [ -f "$prd_file" ]; then
+    log_info "PRD already exists at $prd_file"
+    if validate_prd_schema "$prd_file" 2>/dev/null; then
+      log_info "PRD is valid"
+    else
+      log_warn "PRD has schema issues"
+    fi
+    local story_count
+    story_count=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo "?")
+    log_info "Stories: $story_count"
+    jq -r '.userStories[] | "  \(.id) [P\(.priority // "?")] \(.title)"' "$prd_file" 2>/dev/null || true
+    exit "$EXIT_SUCCESS"
+  fi
+
+  # Setup branch
+  if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
+    log_info "Switching to existing branch: $branch"
+    git checkout "$branch"
+  else
+    log_info "Creating branch: $branch from $base_branch"
+    git checkout -b "$branch" "$base_branch"
+  fi
+
+  # Initialize progress file if needed
+  if [ ! -f "$progress_file" ]; then
+    cat > "$progress_file" <<EOF
+# Progress Log for $req_id
+Started: $(date)
+---
+EOF
+  fi
+
+  # Phase 1: Planning
+  log_info ""
+  log_info "═══════════════════════════════════════════════════════"
+  log_info "  Phase 1: Planning (plan-only mode)"
+  log_info "═══════════════════════════════════════════════════════"
+
+  build_planning_prompt "$prompt_file" "$sanitized_content"
+  log_info "Planning prompt built"
+
+  local CLAUDE_OUTPUT=""
+  local plan_attempts=0
+  local plan_max=2
+
+  while [ "$plan_attempts" -lt "$plan_max" ]; do
+    plan_attempts=$((plan_attempts + 1))
+    log_info "Planning attempt $plan_attempts of $plan_max"
+
+    run_claude_iteration "$prompt_file" "$agent_dir" "plan-$plan_attempts" "$model"
+
+    # Save planning log
+    echo "$CLAUDE_OUTPUT" > "$agent_dir/iteration-plan-$plan_attempts.log"
+    extract_iteration_summary "$CLAUDE_OUTPUT" "$agent_dir" "plan-$plan_attempts"
+
+    # Check if PRD was created
+    if [ -f "$prd_file" ]; then
+      if validate_prd_schema "$prd_file" 2>/dev/null; then
+        log_info "PRD created and validated successfully"
+        break
+      else
+        log_warn "PRD created but has schema issues"
+        if [ "$plan_attempts" -lt "$plan_max" ]; then
+          log_info "Retrying planning..."
+          rm -f "$prd_file"
+        fi
+      fi
+    else
+      log_warn "PRD not created by agent"
+      if [ "$plan_attempts" -lt "$plan_max" ]; then
+        log_info "Retrying planning..."
+      fi
+    fi
+  done
+
+  if [ ! -f "$prd_file" ]; then
+    log_error "Agent failed to create PRD after $plan_max attempts"
+    exit "$EXIT_AGENT_ERROR"
+  fi
+
+  # Print summary
+  log_info ""
+  log_info "Plan complete. PRD saved to: $prd_file"
+  local story_count
+  story_count=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo "?")
+  log_info "Stories: $story_count"
+  jq -r '.userStories[] | "  \(.id) [P\(.priority // "?")] \(.title)"' "$prd_file" 2>/dev/null || true
+  log_info ""
+  log_info "To run implementation: reqdrive run $req_id"
+
+  exit "$EXIT_SUCCESS"
+}
+
+# ── Main Pipeline ────────────────────────────────────────────────────────────
+
+run_pipeline() {
+  local input_req_id="$1"
+
+  if [ -z "$input_req_id" ]; then
+    echo "Usage: reqdrive run <REQ-ID>" >&2
+    exit "$EXIT_GENERAL_ERROR"
+  fi
+
+  # Shared setup
+  local req_id req_slug req_dir branch base_branch agent_dir
+  local req_file requirement_content sanitized_content
+  local prompt_file progress_file prd_file model
+  pipeline_setup "$input_req_id"
+
+  log_info "Starting pipeline for $req_id"
+
+  # ── Check for resume ──
 
   # Write initial run status
   write_run_status "$agent_dir" "running" "$req_id"
@@ -524,11 +681,6 @@ run_pipeline() {
     git checkout -b "$branch" "$base_branch"
   fi
 
-  # ── Setup agent files ──
-  local prompt_file="$agent_dir/prompt.md"
-  local progress_file="$agent_dir/progress.txt"
-  local prd_file="$agent_dir/prd.json"
-
   # Validate existing PRD on resume
   if [ -f "$prd_file" ]; then
     if ! validate_prd_schema "$prd_file" 2>/dev/null; then
@@ -545,12 +697,7 @@ Started: $(date)
 EOF
   fi
 
-  # Sanitize the requirement content before embedding in prompts
-  local sanitized_content
-  sanitized_content=$(sanitize_for_prompt "$requirement_content")
-
   local max_iterations="${REQDRIVE_MAX_ITERATIONS:-10}"
-  local model="${REQDRIVE_MODEL:-claude-sonnet-4-20250514}"
   local completion_signal="<promise>COMPLETE</promise>"
   local CLAUDE_OUTPUT=""
 
@@ -633,9 +780,10 @@ EOF
     log_info "  Iteration $i of $max_iterations"
     log_info "═══════════════════════════════════════════════════════"
 
-    # Deterministic story selection
+    # Deterministic story selection (respects retry limit)
+    local max_story_retries="${REQDRIVE_MAX_STORY_RETRIES:-3}"
     local next_story
-    next_story=$(select_next_story "$prd_file")
+    next_story=$(select_next_story "$prd_file" "$max_story_retries")
 
     if [ -z "$next_story" ]; then
       log_info "All stories complete!"
@@ -660,6 +808,29 @@ EOF
 
     # Extract iteration summary
     extract_iteration_summary "$CLAUDE_OUTPUT" "$agent_dir" "$i"
+
+    # Run test command if configured (observation mode — warn, don't abort)
+    if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
+      log_info "Running test command: $REQDRIVE_TEST_COMMAND"
+      local test_log="$agent_dir/iteration-$i.test.log"
+      if eval "$REQDRIVE_TEST_COMMAND" > "$test_log" 2>&1; then
+        log_info "Tests passed after iteration $i"
+      else
+        log_warn "Tests FAILED after iteration $i (see iteration-$i.test.log)"
+      fi
+    fi
+
+    # Verify agent committed (observation mode — warn, don't abort)
+    local latest_commit_msg
+    latest_commit_msg=$(git log --oneline -1 --format='%s' 2>/dev/null || echo "")
+    if [[ "$latest_commit_msg" != feat:\ \[${next_story}\]* ]]; then
+      log_warn "Expected commit for $next_story, latest commit: $latest_commit_msg"
+    fi
+
+    # Increment attempt counter for this story in prd.json
+    jq --arg id "$next_story" \
+      '(.userStories[] | select(.id == $id)).attempts = ((.userStories[] | select(.id == $id)).attempts // 0) + 1' \
+      "$prd_file" > "${prd_file}.tmp" && mv "${prd_file}.tmp" "$prd_file"
 
     # Save checkpoint and update run status
     save_checkpoint "$agent_dir" "$req_id" "$branch" "$i" "$prd_file"

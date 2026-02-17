@@ -5,5 +5,6 @@
   "iteration": 3,
   "timestamp": "2025-01-30T10:00:00+00:00",
   "prd_exists": true,
-  "stories_complete": ["US-001", "US-002"]
+  "stories_complete": ["US-001", "US-002"],
+  "last_commit_sha": "abc1234567890def"
 }

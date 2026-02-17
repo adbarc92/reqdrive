@@ -196,6 +196,30 @@ EOF
 )
 test_result "load_config: defaults testCommand to empty string" $?
 
+# Test: reqdrive_load_config defaults maxStoryRetries to 3
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_MAX_STORY_RETRIES" = "3" ]
+)
+test_result "load_config: defaults maxStoryRetries to 3" $?
+
+# Test: reqdrive_load_config loads custom maxStoryRetries
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"maxStoryRetries": 5}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_MAX_STORY_RETRIES" = "5" ]
+)
+test_result "load_config: loads custom maxStoryRetries" $?
+
 # Test: reqdrive_load_config defaults projectName to empty
 (
   cd "$TEST_TEMP"
@@ -981,6 +1005,27 @@ EOF
 )
 test_result "schema: validate_prd_schema rejects non-boolean passes" $?
 
+# Test: validate_prd_schema rejects non-number priority
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/bad-priority.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"id":"US-001","title":"X","acceptanceCriteria":["a"],"priority":"high"}]}
+EOF
+  output=$(validate_prd_schema "$TEST_TEMP/bad-priority.json" 2>&1) && exit 1
+  echo "$output" | grep -q "priority must be a number"
+)
+test_result "schema: validate_prd_schema rejects non-number priority" $?
+
+# Test: validate_prd_schema passes when priority is missing (optional)
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  cat > "$TEST_TEMP/no-priority.json" <<'EOF'
+{"project":"T","sourceReq":"REQ-01","userStories":[{"id":"US-001","title":"X","acceptanceCriteria":["a"],"passes":false}]}
+EOF
+  validate_prd_schema "$TEST_TEMP/no-priority.json" 2>/dev/null
+)
+test_result "schema: validate_prd_schema passes when priority is missing" $?
+
 echo ""
 echo "--- Schema: validate_checkpoint_schema ---"
 
@@ -1382,6 +1427,35 @@ test_result "checkpoint: load returns empty for mismatched req_id" $?
 )
 test_result "checkpoint: load returns empty for missing file" $?
 
+# Test: save_checkpoint includes last_commit_sha field
+(
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  cd "$tmpdir"
+  git init -q
+  git config user.email "test@test.com"
+  git config user.name "Test"
+  touch f.txt && git add f.txt && git commit -q -m "init"
+
+  mkdir -p "$tmpdir/cp-sha"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$tmpdir/cp-sha/prd.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[]}
+PRDEOF
+
+  save_checkpoint "$tmpdir/cp-sha" "REQ-01" "reqdrive/req-01" 1 "$tmpdir/cp-sha/prd.json" 2>/dev/null
+  # Verify last_commit_sha field exists and is not empty
+  sha=$(jq -r '.last_commit_sha' "$tmpdir/cp-sha/checkpoint.json")
+  [ -n "$sha" ] && [ "$sha" != "null" ]
+)
+test_result "checkpoint: save_checkpoint includes last_commit_sha" $?
+
 echo ""
 echo "--- Story Selection ---"
 
@@ -1462,6 +1536,69 @@ PRDEOF
   echo "$result" | jq -r '.title' | grep -q "Second Story"
 )
 test_result "story: get_story_details returns correct story by ID" $?
+
+# Test: select_next_story skips stories with attempts >= max
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-retry.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":false,"attempts":3},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":false,"attempts":1}
+]}
+PRDEOF
+
+  result=$(select_next_story "$TEST_TEMP/story-retry.json" 3)
+  [ "$result" = "US-002" ]
+)
+test_result "story: select_next_story skips stories with attempts >= max" $?
+
+# Test: select_next_story returns story with attempts < max
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-retry2.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":false,"attempts":2},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":false}
+]}
+PRDEOF
+
+  result=$(select_next_story "$TEST_TEMP/story-retry2.json" 3)
+  [ "$result" = "US-001" ]
+)
+test_result "story: select_next_story returns story with attempts < max" $?
+
+# Test: select_next_story returns empty when all stories exhausted
+(
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-exhausted.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":false,"attempts":3},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2,"passes":true}
+]}
+PRDEOF
+
+  result=$(select_next_story "$TEST_TEMP/story-exhausted.json" 3)
+  [ -z "$result" ]
+)
+test_result "story: select_next_story returns empty when all exhausted" $?
 
 echo ""
 echo "--- Prompt Builders ---"
@@ -1638,14 +1775,27 @@ EOF
 )
 test_result "cli: migrate skips config that already has version" $?
 
-# Test: plan and orchestrate show "coming soon" stubs
+# Test: plan without args shows usage (requires claude)
+if [ "$HAS_CLAUDE" = "true" ]; then
+  (
+    cd "$TEST_TEMP"
+    cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+    output=$("$REQDRIVE_ROOT/bin/reqdrive" plan 2>&1) || true
+    echo "$output" | grep -q "Usage: reqdrive plan"
+  )
+  test_result "cli: plan without args shows usage" $?
+else
+  test_skip "cli: plan without args shows usage" "claude not available"
+fi
+
+# Test: orchestrate shows "coming soon" stub
 (
-  output=$("$REQDRIVE_ROOT/bin/reqdrive" plan 2>&1)
-  echo "$output" | grep -qi "coming soon" &&
   output=$("$REQDRIVE_ROOT/bin/reqdrive" orchestrate 2>&1)
   echo "$output" | grep -qi "coming soon"
 )
-test_result "cli: plan and orchestrate show 'coming soon'" $?
+test_result "cli: orchestrate shows 'coming soon'" $?
 
 echo ""
 echo "--- Preflight: Missing Coverage ---"

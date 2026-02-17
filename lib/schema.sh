@@ -136,6 +136,9 @@ validate_prd_schema() {
           else empty end),
           (if $s | has("passes") then
             if ($s.passes | type) != "boolean" then "story[\($i)]: passes must be a boolean" else empty end
+          else empty end),
+          (if $s | has("priority") then
+            if ($s.priority | type) != "number" then "story[\($i)]: priority must be a number" else empty end
           else empty end)
         ] | .[]
       else empty end
