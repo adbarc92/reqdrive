@@ -180,9 +180,12 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
 - [x] Verification phase between implementation and PR creation — `lib/run.sh` Phase 3, generates `verification-summary.json`, runs final test suite, failed verification forces draft PR
 - [x] Enriched PR body with test results, iteration log summary, and verification data — `lib/pr-create.sh` reads `verification-summary.json`, adds Pipeline Verification table
 - [x] Per-iteration result tracking in `run.json` — `summary` field with tests/commits/stories counts via `RUN_SUMMARY_*` accumulators
-- [ ] Post-iteration scope checking (diff analysis to detect out-of-scope changes)
+- [ ] Post-iteration scope checking (diff analysis to detect out-of-scope changes) — promote to hard gate, not just advisory (cf. Code Factory model)
 - [ ] `reqdrive verify <REQ-ID>` as standalone command
 - [ ] Heredoc structural fix — replace unquoted heredoc in `build_implementation_prompt` with quoted heredoc + explicit variable injection (`sed`/`envsubst`)
+- [ ] Post-PR review agent step — invoke a code review agent (CodeRabbit, Greptile, or second Claude pass) after PR creation, include findings in PR body. Biggest gap vs. Code Factory model.
+- [ ] Risk tiers by path — define high/medium/low risk paths in `reqdrive.json` (e.g., auth, payments, config). High-risk paths require stricter evidence (test coverage, explicit story reference).
+- [ ] Contract/policy definition file — extend `reqdrive.json` or add `.reqdrive/policy.json` defining evidence requirements, risk tiers, docs drift rules, and review policy per tier.
 
 ### Tier 3 — Build Eventually (full vision)
 
