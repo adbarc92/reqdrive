@@ -173,8 +173,20 @@ cmd_run() {
 
 cmd_validate() {
   source "$REQDRIVE_ROOT/lib/config.sh"
-  reqdrive_load_config
 
+  # Find manifest without loading (loading fails on invalid JSON due to jq calls)
+  local manifest
+  manifest=$(reqdrive_find_manifest) || {
+    echo "ERROR: No reqdrive.json found. Run 'reqdrive init' to create one." >&2
+    exit 1
+  }
+  export REQDRIVE_MANIFEST="$manifest"
+  export REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"
+
+  # Source schema for validation functions
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+
+  # Run validate.sh directly — it handles invalid JSON gracefully
   source "$REQDRIVE_ROOT/lib/validate.sh"
 }
 
