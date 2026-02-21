@@ -72,10 +72,12 @@ teardown() {
 
 @test "E2E: run requires valid requirement file" {
   create_test_project "$TEST_TEMP_DIR"
+  # Create a different requirement so the dir isn't empty, but REQ-01 doesn't match
+  create_test_requirement "$TEST_TEMP_DIR" "REQ-99" "Other Feature"
   init_test_git_repo "$TEST_TEMP_DIR"
   cd "$TEST_TEMP_DIR"
 
-  # No requirement file exists
+  # REQ-01 requirement file does not exist (only REQ-99 does)
   run bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01
   [ "$status" -ne 0 ]
   [[ "$output" == *"No requirement file"* ]] || [[ "$output" == *"not found"* ]]
@@ -84,11 +86,9 @@ teardown() {
 @test "E2E: run normalizes requirement ID to uppercase" {
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
 
   # Mock claude that creates PRD (planning phase) then signals complete
-  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/runs/req-01"
   cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
 # Create PRD if it doesn't exist (planning phase)
@@ -101,6 +101,10 @@ fi
 echo "<promise>COMPLETE</promise>"
 MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Init git AFTER mock is in place so working tree is clean
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
 
   # Use lowercase req-01
   run timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run req-01 2>&1 || true
@@ -116,11 +120,9 @@ MOCKEOF
 @test "E2E: run creates branch from base branch" {
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
 
   # Mock claude that creates PRD then signals complete
-  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/runs/req-01"
   cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
 if [ ! -f "$agent_dir/prd.json" ]; then
@@ -132,6 +134,10 @@ fi
 echo "<promise>COMPLETE</promise>"
 MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Init git AFTER mock is in place so working tree is clean
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
 
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
@@ -147,11 +153,9 @@ MOCKEOF
 @test "E2E: run creates agent directory structure" {
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
 
   # Mock claude that creates PRD
-  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/runs/req-01"
   cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
 if [ ! -f "$agent_dir/prd.json" ]; then
@@ -164,15 +168,19 @@ echo "<promise>COMPLETE</promise>"
 MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
 
+  # Init git AFTER mock is in place so working tree is clean
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
-  # Check agent directory exists
-  [ -d "$TEST_TEMP_DIR/.reqdrive/agent" ]
+  # Check run directory exists (v0.3.0 uses .reqdrive/runs/<slug>/)
+  [ -d "$TEST_TEMP_DIR/.reqdrive/runs/req-01" ]
   # Prompt should be created
-  [ -f "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" ]
+  [ -f "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" ]
   # Progress file should be created
-  [ -f "$TEST_TEMP_DIR/.reqdrive/agent/progress.txt" ]
+  [ -f "$TEST_TEMP_DIR/.reqdrive/runs/req-01/progress.txt" ]
 }
 
 # ============================================================================
@@ -190,11 +198,8 @@ MOCKEOF
 This is a unique test marker for verification.
 EOF
 
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
   # Mock claude that creates PRD
-  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/runs/req-01"
   cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
 if [ ! -f "$agent_dir/prd.json" ]; then
@@ -206,22 +211,24 @@ fi
 echo "<promise>COMPLETE</promise>"
 MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Init git AFTER mock is in place so working tree is clean
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
 
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # Check prompt contains the requirement (planning prompt)
-  grep -q "XYZ123" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Prompt not created yet"
+  grep -q "XYZ123" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" || skip "Prompt not created yet"
 }
 
 @test "E2E: planning prompt contains planning instructions" {
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
 
   # Mock claude that creates PRD
-  local agent_dir="$TEST_TEMP_DIR/.reqdrive/agent"
+  local agent_dir="$TEST_TEMP_DIR/.reqdrive/runs/req-01"
   cat > "$TEST_TEMP_DIR/bin/claude" <<MOCKEOF
 #!/usr/bin/env bash
 if [ ! -f "$agent_dir/prd.json" ]; then
@@ -233,13 +240,17 @@ fi
 echo "<promise>COMPLETE</promise>"
 MOCKEOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  # Init git AFTER mock is in place so working tree is clean
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
 
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # The initial prompt should be a planning prompt (since no PRD existed)
   # Check for planning-phase language in the iteration log
-  [[ -f "$TEST_TEMP_DIR/.reqdrive/agent/iteration-plan-1.log" ]] || skip "Planning log not created"
+  [[ -f "$TEST_TEMP_DIR/.reqdrive/runs/req-01/iteration-plan-1.log" ]] || skip "Planning log not created"
 }
 
 # ============================================================================
@@ -250,15 +261,16 @@ MOCKEOF
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
   create_test_prd "$TEST_TEMP_DIR" "REQ-01"
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
 
-  # Mock claude
+  # Mock claude (before git init so working tree stays clean)
   cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 echo "<promise>COMPLETE</promise>"
 EOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
 
   # Run pipeline
   run timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
@@ -271,22 +283,23 @@ EOF
   create_test_project "$TEST_TEMP_DIR"
   create_test_requirement "$TEST_TEMP_DIR" "REQ-01" "Test Feature"
   create_test_prd "$TEST_TEMP_DIR" "REQ-01"
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
 
-  # Mock claude
+  # Mock claude (before git init so working tree stays clean)
   cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 echo "<promise>COMPLETE</promise>"
 EOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
 
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # The prompt should contain the story ID (deterministically selected US-001)
-  grep -q "US-001" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Prompt not created"
-  grep -q "First story" "$TEST_TEMP_DIR/.reqdrive/agent/prompt.md" || skip "Story title not in prompt"
+  grep -q "US-001" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" || skip "Prompt not created"
+  grep -q "First story" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" || skip "Story title not in prompt"
 }
 
 # ============================================================================
@@ -307,16 +320,16 @@ EOF
 }
 EOF
 
-  init_test_git_repo "$TEST_TEMP_DIR"
-  cd "$TEST_TEMP_DIR"
-
-  # Mock claude to capture args
+  # Mock claude to capture args (before git init so working tree stays clean)
   cat > "$TEST_TEMP_DIR/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 echo "ARGS: $*" >> /tmp/claude-args.log
 echo "<promise>COMPLETE</promise>"
 EOF
   chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+  init_test_git_repo "$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
 
   # Run pipeline
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true

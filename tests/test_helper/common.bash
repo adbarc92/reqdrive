@@ -80,6 +80,7 @@ create_test_project() {
   local dir="${1:-.}"
   mkdir -p "$dir/docs/requirements"
   mkdir -p "$dir/.reqdrive/agent"
+  mkdir -p "$dir/.reqdrive/runs"
   create_test_manifest "$dir"
 }
 
@@ -105,7 +106,7 @@ EOF
 init_test_git_repo() {
   local dir="${1:-.}"
   cd "$dir" || exit 1
-  git init -q
+  git -c init.defaultBranch=main init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
   git add -A
@@ -150,8 +151,10 @@ EOF
 create_test_prd() {
   local dir="${1:-.}"
   local req_id="${2:-REQ-01}"
-  mkdir -p "$dir/.reqdrive/agent"
-  cat > "$dir/.reqdrive/agent/prd.json" <<EOF
+  local req_slug
+  req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
+  mkdir -p "$dir/.reqdrive/runs/$req_slug"
+  cat > "$dir/.reqdrive/runs/$req_slug/prd.json" <<EOF
 {
   "version": "0.3.0",
   "project": "Test Project - Feature",
@@ -184,8 +187,10 @@ create_test_checkpoint() {
   local dir="${1:-.}"
   local req_id="${2:-REQ-01}"
   local iteration="${3:-1}"
-  mkdir -p "$dir/.reqdrive/agent"
-  cat > "$dir/.reqdrive/agent/checkpoint.json" <<EOF
+  local req_slug
+  req_slug=$(echo "$req_id" | tr '[:upper:]' '[:lower:]')
+  mkdir -p "$dir/.reqdrive/runs/$req_slug"
+  cat > "$dir/.reqdrive/runs/$req_slug/checkpoint.json" <<EOF
 {
   "version": "0.3.0",
   "req_id": "$req_id",
