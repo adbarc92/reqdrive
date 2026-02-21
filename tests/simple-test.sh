@@ -2201,6 +2201,101 @@ test_result "pr: body includes verification section from summary" $?
 test_result "pr: body omits verification section when no summary file" $?
 
 echo ""
+echo "--- Review Phase ---"
+
+# Test: config defaults reviewCommand to empty string
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_REVIEW_COMMAND" = "" ]
+)
+test_result "review: config defaults reviewCommand to empty string" $?
+
+# Test: config reads reviewCommand from JSON
+(
+  cd "$TEST_TEMP"
+  cat > reqdrive.json <<'EOF'
+{"reviewCommand": "builtin"}
+EOF
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_REVIEW_COMMAND" = "builtin" ]
+)
+test_result "review: config reads reviewCommand from JSON" $?
+
+# Test: schema accepts string reviewCommand
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"reviewCommand": "builtin"}' > "$TEST_TEMP/review-str.json"
+  validate_config_schema "$TEST_TEMP/review-str.json" 2>/dev/null
+)
+test_result "review: schema accepts string reviewCommand" $?
+
+# Test: schema rejects non-string reviewCommand
+(
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  echo '{"reviewCommand": 123}' > "$TEST_TEMP/review-bad.json"
+  output=$(validate_config_schema "$TEST_TEMP/review-bad.json" 2>&1) && exit 1
+  echo "$output" | grep -q "reviewCommand must be a string"
+)
+test_result "review: schema rejects non-string reviewCommand" $?
+
+# Test: update_pr_with_review formats findings into PR body
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/agent"
+
+  # Create findings file
+  cat > "$tmpdir/agent/review-findings.json" <<'EOF'
+[
+  {"severity": "warning", "file": "lib/run.sh", "message": "Missing null check"},
+  {"severity": "info", "file": "lib/config.sh", "message": "Consider adding validation"}
+]
+EOF
+
+  # Mock gh
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          view) echo "Existing PR body" ;;
+          edit)
+            # Capture the body argument
+            shift 2
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --body) echo "$2" > "$tmpdir/.updated-body"; shift ;;
+              esac
+              shift
+            done
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  export -f gh
+
+  source "$REQDRIVE_ROOT/lib/pr-create.sh"
+
+  update_pr_with_review "https://github.com/test/repo/pull/42" "$tmpdir/agent" 2>/dev/null
+
+  [ -f "$tmpdir/.updated-body" ] &&
+  grep -q "Code Review Findings" "$tmpdir/.updated-body" &&
+  grep -q "Missing null check" "$tmpdir/.updated-body" &&
+  grep -q "warning" "$tmpdir/.updated-body"
+)
+test_result "review: update_pr_with_review formats findings correctly" $?
+
+echo ""
 echo "========================================"
 echo "  Results: $PASS passed, $FAIL failed, $SKIP skipped, $TOTAL total"
 echo "========================================"

@@ -6,6 +6,74 @@ if ! type sanitize_label &>/dev/null; then
   source "${REQDRIVE_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/sanitize.sh"
 fi
 
+# Append review findings to an existing PR body
+# Args: $1=pr_url, $2=agent_dir
+# Returns: 0 on success, 1 on failure
+update_pr_with_review() {
+  local pr_url="$1"
+  local agent_dir="$2"
+
+  local findings_file="$agent_dir/review-findings.json"
+
+  if [ ! -f "$findings_file" ]; then
+    echo "  No review-findings.json found, skipping PR update" >&2
+    return 1
+  fi
+
+  # Validate it's a JSON array
+  if ! jq -e 'type == "array"' "$findings_file" >/dev/null 2>&1; then
+    echo "  WARN: review-findings.json is not a JSON array, skipping PR update" >&2
+    return 1
+  fi
+
+  local finding_count
+  finding_count=$(jq 'length' "$findings_file" 2>/dev/null || echo "0")
+
+  if [ "$finding_count" -eq 0 ]; then
+    echo "  No review findings to append" >&2
+    return 0
+  fi
+
+  # Format findings as markdown table
+  local review_section
+  review_section=$(printf '\n## Code Review Findings\n\n')
+  review_section+=$(printf '| Severity | File | Finding |\n')
+  review_section+=$(printf '|----------|------|---------|\n')
+
+  local rows
+  rows=$(jq -r '.[] | "| \(.severity // "info") | \(.file // "-") | \(.message // "-") |"' "$findings_file" 2>/dev/null)
+
+  if [ -n "$rows" ]; then
+    review_section+="$rows"
+  fi
+
+  # Sanitize the review section
+  review_section=$(sanitize_for_prompt "$review_section")
+
+  # Extract PR number from URL for gh commands
+  local pr_number
+  pr_number=$(echo "$pr_url" | grep -o '[0-9]*$')
+
+  if [ -z "$pr_number" ]; then
+    echo "  WARN: Could not extract PR number from URL: $pr_url" >&2
+    return 1
+  fi
+
+  # Fetch current PR body and append review section
+  local current_body
+  current_body=$(gh pr view "$pr_number" --json body --jq '.body' 2>/dev/null || echo "")
+
+  local new_body="${current_body}${review_section}"
+
+  if gh pr edit "$pr_number" --body "$new_body" >/dev/null 2>&1; then
+    echo "  PR updated with $finding_count review finding(s)" >&2
+    return 0
+  else
+    echo "  WARN: Failed to update PR with review findings" >&2
+    return 1
+  fi
+}
+
 create_pr() {
   local project_root="$1"
   local req="$2"

@@ -16,14 +16,14 @@ lib/
   config.sh           Find reqdrive.json (walks up), export REQDRIVE_* env vars
   sanitize.sh         Input sanitization (prompts, labels, content, file paths)
   preflight.sh        Pre-run safety checks (clean tree, branch, req file exists)
-  run.sh              Core pipeline: planning → implementation → verification → PR
-  pr-create.sh        Build and submit GitHub PR with verification data + validation checklist
+  run.sh              Core pipeline: planning → implementation → verification → review → PR
+  pr-create.sh        Build and submit GitHub PR with verification data + validation checklist + review findings
   init.sh             Interactive setup wizard — creates reqdrive.json + directories
   validate.sh         Config validation command
 templates/
   reqdrive.json.example   Example configuration
 tests/
-  simple-test.sh      Primary test suite (152 tests, no external dependencies)
+  simple-test.sh      Primary test suite (157 tests, no external dependencies)
   run-tests.sh        Full test suite runner (requires bats-core)
   fixtures/           JSON fixtures for schema validation tests
   BEHAVIOR-SPEC.md    Behavioral contract for modules 1-4
@@ -39,6 +39,7 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
 4. **Phase 2: Implementation** — One Claude invocation per story, deterministic selection by priority. Per-iteration test execution and commit verification with result tracking.
 5. **Phase 3: Verification** — Collect story stats, run final test suite, generate `verification-summary.json`. Failed verification forces draft PR.
 6. **PR creation** — Push branch, create GitHub PR with verification data table + validation checklist from PRD
+7. **Phase 4: Review** — If `reviewCommand` is configured, run post-PR code review. `"builtin"` uses Claude to review the diff; any other string runs as an external command. Findings appended to PR body via `gh pr edit`. Warn-only (never aborts pipeline).
 
 ## Architectural Principles
 
@@ -70,6 +71,9 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
   - `iteration-N.test.log` — test command output per iteration
   - `verification-summary.json` — pipeline verification results (stories, tests, commits)
   - `verification.test.log` — final test suite output
+  - `review-prompt.md` — review agent prompt (builtin mode)
+  - `review.log` — raw review agent output
+  - `review-findings.json` — structured review findings (JSON array)
   - `output.log` — stdout/stderr capture for `launch` command
 
 ## Commands
@@ -99,6 +103,7 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
 | `prLabels` | `["agent-generated"]` | array |
 | `projectName` | `""` | string |
 | `completionHook` | `""` | string (shell command) |
+| `reviewCommand` | `""` | string (`"builtin"` or shell command) |
 
 ## Exit Codes
 
@@ -183,7 +188,7 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
 - [ ] Post-iteration scope checking (diff analysis to detect out-of-scope changes) — promote to hard gate, not just advisory (cf. Code Factory model)
 - [ ] `reqdrive verify <REQ-ID>` as standalone command
 - [ ] Heredoc structural fix — replace unquoted heredoc in `build_implementation_prompt` with quoted heredoc + explicit variable injection (`sed`/`envsubst`)
-- [ ] Post-PR review agent step — invoke a code review agent (CodeRabbit, Greptile, or second Claude pass) after PR creation, include findings in PR body. Biggest gap vs. Code Factory model.
+- [x] Post-PR review agent step — `run_review_phase()` in `lib/run.sh`, `update_pr_with_review()` in `lib/pr-create.sh`. Configurable via `reviewCommand` (`"builtin"` for Claude review, or external command). Findings appended to PR body.
 - [ ] Risk tiers by path — define high/medium/low risk paths in `reqdrive.json` (e.g., auth, payments, config). High-risk paths require stricter evidence (test coverage, explicit story reference).
 - [ ] Contract/policy definition file — extend `reqdrive.json` or add `.reqdrive/policy.json` defining evidence requirements, risk tiers, docs drift rules, and review policy per tier.
 

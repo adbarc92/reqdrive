@@ -76,6 +76,10 @@ reqdrive_load_config() {
   # Optional: shell command to run on pipeline completion
   export REQDRIVE_COMPLETION_HOOK
   REQDRIVE_COMPLETION_HOOK="$(jq -r '.completionHook // ""' "$manifest")"
+
+  # Optional: review command ("builtin" for Claude review, or custom command)
+  export REQDRIVE_REVIEW_COMMAND
+  REQDRIVE_REVIEW_COMMAND="$(jq -r '.reviewCommand // ""' "$manifest")"
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────

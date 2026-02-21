@@ -7,5 +7,6 @@
   "baseBranch": "main",
   "prLabels": ["agent-generated"],
   "projectName": "My Project",
-  "completionHook": ""
+  "completionHook": "",
+  "reviewCommand": ""
 }

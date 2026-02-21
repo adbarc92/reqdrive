@@ -458,6 +458,171 @@ run_completion_hook() {
     bash -c "$hook" 2>&1 || log_warn "Completion hook exited with code $?"
 }
 
+# ── Review Phase ────────────────────────────────────────────────────────────
+
+# Run post-PR code review phase
+# Args: $1=pr_url $2=agent_dir $3=branch $4=base_branch $5=req_id $6=model
+# Always returns 0 (warn-before-enforce)
+run_review_phase() {
+  local pr_url="$1"
+  local agent_dir="$2"
+  local branch="$3"
+  local base_branch="$4"
+  local req_id="$5"
+  local model="$6"
+
+  local review_command="${REQDRIVE_REVIEW_COMMAND:-}"
+
+  if [ -z "$review_command" ]; then
+    log_info "No reviewCommand configured, skipping review phase"
+    return 0
+  fi
+
+  log_info ""
+  log_info "═══════════════════════════════════════════════════════"
+  log_info "  Phase 4: Review"
+  log_info "═══════════════════════════════════════════════════════"
+
+  local review_log="$agent_dir/review.log"
+  local findings_file="$agent_dir/review-findings.json"
+
+  if [ "$review_command" = "builtin" ]; then
+    # Built-in Claude review
+    log_info "Running built-in Claude review..."
+
+    # Generate diff for review
+    local diff_content
+    diff_content=$(git diff "$base_branch"..."$branch" 2>/dev/null || echo "")
+
+    if [ -z "$diff_content" ]; then
+      log_warn "No diff between $base_branch and $branch, skipping review"
+      return 0
+    fi
+
+    # Load verification summary if available
+    local verification_context=""
+    local verification_file="$agent_dir/verification-summary.json"
+    if [ -f "$verification_file" ]; then
+      verification_context=$(cat "$verification_file" 2>/dev/null || echo "")
+    fi
+
+    # Load PRD acceptance criteria for review context
+    local prd_context=""
+    local prd_file="$agent_dir/prd.json"
+    if [ -f "$prd_file" ]; then
+      prd_context=$(jq -r '.userStories[] | "- \(.id): \(.title)\n  Criteria: \(.acceptanceCriteria | join("; "))"' "$prd_file" 2>/dev/null || echo "")
+    fi
+
+    # Build review prompt
+    local review_prompt_file="$agent_dir/review-prompt.md"
+    cat > "$review_prompt_file" <<'REVIEW_PROMPT'
+# Code Review Agent
+
+You are a code review agent. Review the diff below and produce a JSON array of findings.
+
+## Output Format
+
+Output ONLY a JSON array (no markdown fences, no commentary). Each finding:
+
+```
+[
+  {"severity": "critical|warning|info", "file": "path/to/file", "message": "Description of the issue"}
+]
+```
+
+If there are no findings, output an empty array: `[]`
+
+## Review Criteria
+
+1. **Security**: injection, auth bypass, secrets in code, unsafe operations
+2. **Correctness**: logic errors, edge cases, off-by-one, null handling
+3. **Scope**: changes outside what the requirement asks for
+4. **Quality**: dead code, unnecessary complexity, missing error handling
+
+## Acceptance Criteria (from PRD)
+
+REVIEW_PROMPT
+
+    echo "$prd_context" >> "$review_prompt_file"
+
+    cat >> "$review_prompt_file" <<'REVIEW_PROMPT2'
+
+## Verification Summary
+
+REVIEW_PROMPT2
+
+    echo "$verification_context" >> "$review_prompt_file"
+
+    cat >> "$review_prompt_file" <<'REVIEW_PROMPT3'
+
+## Diff to Review
+
+REVIEW_PROMPT3
+
+    echo '```diff' >> "$review_prompt_file"
+    echo "$diff_content" >> "$review_prompt_file"
+    echo '```' >> "$review_prompt_file"
+
+    # Invoke Claude for review
+    local CLAUDE_OUTPUT=""
+    run_claude_iteration "$review_prompt_file" "$agent_dir" "review" "$model"
+    echo "$CLAUDE_OUTPUT" > "$review_log"
+
+    # Extract JSON array from output — try raw output first, then fenced block
+    local extracted=""
+    if echo "$CLAUDE_OUTPUT" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      extracted="$CLAUDE_OUTPUT"
+    else
+      # Try extracting from ```json fenced block
+      extracted=$(echo "$CLAUDE_OUTPUT" | sed -n '/^```json/,/^```/{/^```/d;p}' | head -100)
+      if ! echo "$extracted" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        # Try extracting any JSON array
+        extracted=$(echo "$CLAUDE_OUTPUT" | grep -o '\[.*\]' | head -1)
+        if ! echo "$extracted" | jq -e 'type == "array"' >/dev/null 2>&1; then
+          log_warn "Could not extract review findings from agent output"
+          return 0
+        fi
+      fi
+    fi
+
+    echo "$extracted" > "$findings_file"
+    local count
+    count=$(jq 'length' "$findings_file" 2>/dev/null || echo "0")
+    log_info "Review produced $count finding(s)"
+
+  else
+    # External review command
+    log_info "Running external review command: $review_command"
+
+    # Export environment for the command
+    PR_URL="$pr_url" \
+    BRANCH="$branch" \
+    BASE_BRANCH="$base_branch" \
+    AGENT_DIR="$agent_dir" \
+    REQ_ID="$req_id" \
+      bash -c "$review_command" > "$review_log" 2>&1 || {
+        log_warn "External review command exited with code $?"
+      }
+
+    if [ -f "$findings_file" ]; then
+      local count
+      count=$(jq 'length' "$findings_file" 2>/dev/null || echo "0")
+      log_info "External review produced $count finding(s)"
+    else
+      log_info "External review did not produce review-findings.json"
+    fi
+  fi
+
+  # Update PR with findings if they exist
+  if [ -f "$findings_file" ]; then
+    update_pr_with_review "$pr_url" "$agent_dir" || {
+      log_warn "Failed to update PR with review findings"
+    }
+  fi
+
+  return 0
+}
+
 # ── Pipeline Setup (shared by run_pipeline and run_plan) ─────────────────
 
 # Sets up common pipeline variables. After calling, the following variables
@@ -1009,6 +1174,7 @@ VEOF
   local pr_url=""
   if pr_url=$(create_pr "$REQDRIVE_PROJECT_ROOT" "$req_id" "$branch" "$base_branch" "$draft_flag" "$agent_dir"); then
     log_info "PR created successfully"
+    run_review_phase "$pr_url" "$agent_dir" "$branch" "$base_branch" "$req_id" "$model"
     write_run_status "$agent_dir" "completed" "$req_id" "${i:-0}" "0" "$pr_url"
     run_completion_hook "$req_id" "completed" "$pr_url" "$branch" "0"
   else
