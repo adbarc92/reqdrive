@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Simple test runner for reqdrive v0.3.0 (no bats dependency)
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091,SC2016,SC2034,SC2030,SC2031,SC2064,SC2317,SC1003
+# SC1091: dynamic source paths
+# SC2016: single-quoted shell metacharacters are intentional (injection tests)
+# SC2034: variables used by sourced code (RUN_SUMMARY_*, etc.)
+# SC2030/SC2031: subshell variable modification is intentional in test cases
+# SC2064: trap with expanded variables is intentional in test subshells
+# SC2317: mock functions called via export -f appear "unreachable" to shellcheck
+# SC1003: backslash in test patterns is intentional
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1663,9 +1670,9 @@ echo "--- Completion Hook ---"
 
   export REQDRIVE_COMPLETION_HOOK="echo \$REQ_ID \$STATUS \$PR_URL \$BRANCH \$EXIT_CODE > $TEST_TEMP/hook-out.txt"
   output=$(run_completion_hook "REQ-01" "completed" "https://pr.url" "reqdrive/req-01" "0" 2>/dev/null)
-  cat "$TEST_TEMP/hook-out.txt" | grep -q "REQ-01" &&
-  cat "$TEST_TEMP/hook-out.txt" | grep -q "completed" &&
-  cat "$TEST_TEMP/hook-out.txt" | grep -q "https://pr.url"
+  grep -q "REQ-01" "$TEST_TEMP/hook-out.txt" &&
+  grep -q "completed" "$TEST_TEMP/hook-out.txt" &&
+  grep -q "https://pr.url" "$TEST_TEMP/hook-out.txt"
 )
 test_result "hook: executes command with env vars" $?
 

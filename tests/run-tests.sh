@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test runner for reqdrive
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091,SC2034
 # Usage: ./tests/run-tests.sh [options] [test-files...]
 #
 # Options:
