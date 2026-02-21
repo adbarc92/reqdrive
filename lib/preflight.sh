@@ -124,7 +124,7 @@ check_requirement_exists() {
     echo "            Expected pattern: ${req_dir}/${req_id_upper}*.md" >&2
     echo "" >&2
     echo "  Available requirements:" >&2
-    ls "$req_dir"/*.md 2>/dev/null | xargs -I{} basename {} | sed 's/^/    /' >&2 || echo "    (none)" >&2
+    find "$req_dir" -maxdepth 1 -name '*.md' -print0 2>/dev/null | xargs -0 -I{} basename {} | sed 's/^/    /' >&2 || echo "    (none)" >&2
     return 1
   fi
 

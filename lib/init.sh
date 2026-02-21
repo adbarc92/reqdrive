@@ -82,9 +82,11 @@ if [ -f "$PROJECT_DIR/.gitignore" ]; then
   if ! grep -q '.reqdrive/runs' "$PROJECT_DIR/.gitignore" 2>/dev/null; then
     read -rp "Add .reqdrive/runs to .gitignore? (Y/n): " ADD_GITIGNORE
     if [ "$ADD_GITIGNORE" != "n" ] && [ "$ADD_GITIGNORE" != "N" ]; then
-      echo "" >> "$PROJECT_DIR/.gitignore"
-      echo "# reqdrive run state" >> "$PROJECT_DIR/.gitignore"
-      echo ".reqdrive/runs/" >> "$PROJECT_DIR/.gitignore"
+      {
+        echo ""
+        echo "# reqdrive run state"
+        echo ".reqdrive/runs/"
+      } >> "$PROJECT_DIR/.gitignore"
       echo "Updated .gitignore"
     fi
   fi

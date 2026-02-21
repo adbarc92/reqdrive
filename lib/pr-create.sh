@@ -241,7 +241,7 @@ EOF
   local pr_url=""
 
   if pr_url=$(gh pr create \
-    $draft_flag \
+    ${draft_flag:+"$draft_flag"} \
     --base "$base_branch" \
     --head "$branch" \
     "${label_args[@]}" \
@@ -255,7 +255,7 @@ EOF
     if [ ${#label_args[@]} -gt 0 ]; then
       echo "  WARN: gh pr create failed (exit $gh_exit), retrying without labels..." >&2
       if pr_url=$(gh pr create \
-        $draft_flag \
+        ${draft_flag:+"$draft_flag"} \
         --base "$base_branch" \
         --head "$branch" \
         --title "$project" \

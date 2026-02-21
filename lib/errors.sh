@@ -4,15 +4,15 @@
 # ── Exit Codes ───────────────────────────────────────────────────────────────
 # These codes follow common Unix conventions and provide specific error context
 
-EXIT_SUCCESS=0
-EXIT_GENERAL_ERROR=1
-EXIT_MISSING_DEPENDENCY=2
-EXIT_CONFIG_ERROR=3
-EXIT_GIT_ERROR=4
-EXIT_AGENT_ERROR=5
-EXIT_PR_ERROR=6
-EXIT_USER_ABORT=7
-EXIT_PREFLIGHT_FAILED=8
+export EXIT_SUCCESS=0
+export EXIT_GENERAL_ERROR=1
+export EXIT_MISSING_DEPENDENCY=2
+export EXIT_CONFIG_ERROR=3
+export EXIT_GIT_ERROR=4
+export EXIT_AGENT_ERROR=5
+export EXIT_PR_ERROR=6
+export EXIT_USER_ABORT=7
+export EXIT_PREFLIGHT_FAILED=8
 
 # ── Error Messages ───────────────────────────────────────────────────────────
 

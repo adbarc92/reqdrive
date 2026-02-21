@@ -4,6 +4,7 @@
 # ── Dangerous Pattern Detection ──────────────────────────────────────────────
 
 # Patterns that could indicate shell injection attempts
+# shellcheck disable=SC2016
 DANGEROUS_PATTERNS=(
   # Command substitution
   '\$\('

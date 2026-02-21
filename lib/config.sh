@@ -39,7 +39,8 @@ reqdrive_load_config() {
   }
 
   export REQDRIVE_MANIFEST="$manifest"
-  export REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"
+  REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"
+  export REQDRIVE_PROJECT_ROOT
 
   # Check schema version
   check_schema_version "$manifest" || {

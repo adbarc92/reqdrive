@@ -174,6 +174,7 @@ extract_iteration_summary() {
 
   # Extract the json:iteration-summary fenced block
   local summary
+  # shellcheck disable=SC2016
   summary=$(echo "$output" | sed -n '/^```json:iteration-summary/,/^```/{/^```/d;p}')
 
   if [ -z "$summary" ]; then
@@ -409,17 +410,17 @@ run_claude_iteration() {
 
   local tmpout="$agent_dir/.output-${label}.tmp"
 
-  # Build claude command based on mode
-  local claude_cmd="claude --model $model"
+  # Build claude command as array for safe expansion
+  local claude_args=("--model" "$model")
 
   if [ "${REQDRIVE_INTERACTIVE:-true}" = "false" ]; then
-    claude_cmd="$claude_cmd --dangerously-skip-permissions"
+    claude_args+=("--dangerously-skip-permissions")
   fi
 
   log_info "Running claude [$label] ($([ "${REQDRIVE_INTERACTIVE:-true}" = "true" ] && echo "interactive" || echo "unsafe") mode)..."
 
   # Execute claude
-  if cat "$prompt_file" | timeout 1800 $claude_cmd 2>&1 | tee "$tmpout"; then
+  if timeout 1800 claude "${claude_args[@]}" < "$prompt_file" 2>&1 | tee "$tmpout"; then
     : # Success
   else
     local exit_code=$?
@@ -544,25 +545,23 @@ If there are no findings, output an empty array: `[]`
 
 REVIEW_PROMPT
 
-    echo "$prd_context" >> "$review_prompt_file"
-
-    cat >> "$review_prompt_file" <<'REVIEW_PROMPT2'
+    {
+      echo "$prd_context"
+      cat <<'REVIEW_PROMPT2'
 
 ## Verification Summary
 
 REVIEW_PROMPT2
-
-    echo "$verification_context" >> "$review_prompt_file"
-
-    cat >> "$review_prompt_file" <<'REVIEW_PROMPT3'
+      echo "$verification_context"
+      cat <<'REVIEW_PROMPT3'
 
 ## Diff to Review
 
 REVIEW_PROMPT3
-
-    echo '```diff' >> "$review_prompt_file"
-    echo "$diff_content" >> "$review_prompt_file"
-    echo '```' >> "$review_prompt_file"
+      echo '```diff'
+      echo "$diff_content"
+      echo '```'
+    } >> "$review_prompt_file"
 
     # Invoke Claude for review
     local CLAUDE_OUTPUT=""
@@ -575,6 +574,7 @@ REVIEW_PROMPT3
       extracted="$CLAUDE_OUTPUT"
     else
       # Try extracting from ```json fenced block
+      # shellcheck disable=SC2016
       extracted=$(echo "$CLAUDE_OUTPUT" | sed -n '/^```json/,/^```/{/^```/d;p}' | head -100)
       if ! echo "$extracted" | jq -e 'type == "array"' >/dev/null 2>&1; then
         # Try extracting any JSON array
