@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # run.sh - Core pipeline: requirement -> planning -> implementation -> PR
 # Usage: source this file, then call run_pipeline <REQ-ID>
+# shellcheck disable=SC1091
 
 set -e
 

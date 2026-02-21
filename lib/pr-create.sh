@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # pr-create.sh - Create a PR with validation checklist from PRD
+# shellcheck disable=SC1091
 
 # Source sanitize if not already loaded
 if ! type sanitize_label &>/dev/null; then

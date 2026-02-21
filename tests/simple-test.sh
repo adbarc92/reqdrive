@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Simple test runner for reqdrive v0.3.0 (no bats dependency)
+# shellcheck disable=SC1091
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

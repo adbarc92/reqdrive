@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # config.sh - Minimal configuration loader for reqdrive
 # Finds reqdrive.json and exports REQDRIVE_* environment variables
+# shellcheck disable=SC1091
 
 # Source schema versioning
 source "${REQDRIVE_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/schema.sh"

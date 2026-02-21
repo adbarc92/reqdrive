@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # reqdrive - Requirements-driven development pipeline
 # Simple CLI for running requirements through an AI agent to PRs
+# shellcheck disable=SC1091
 
 set -euo pipefail
 

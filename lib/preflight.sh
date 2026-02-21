@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # preflight.sh - Pre-flight safety checks for reqdrive
+# shellcheck disable=SC1091
 
 # Source errors if not already loaded
 if [ -z "$EXIT_PREFLIGHT_FAILED" ]; then
