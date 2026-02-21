@@ -181,7 +181,8 @@ cmd_validate() {
     exit 1
   }
   export REQDRIVE_MANIFEST="$manifest"
-  export REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"
+  REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"
+  export REQDRIVE_PROJECT_ROOT
 
   # Source schema for validation functions
   source "$REQDRIVE_ROOT/lib/schema.sh"
