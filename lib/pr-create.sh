@@ -56,6 +56,54 @@ create_pr() {
   local commits
   commits=$(git log --oneline "$base_branch".."$branch" 2>/dev/null || echo "No commits found")
 
+  # Load verification summary if it exists
+  local verification_file="$agent_dir/verification-summary.json"
+  local verification_section=""
+  if [ -f "$verification_file" ]; then
+    local v_stories_completed v_stories_total v_stories_failed
+    local v_tests_passed v_tests_failed v_tests_skipped
+    local v_commits_verified v_commits_missing
+    local v_iterations_run v_iterations_max
+    local v_verification_passed
+
+    v_stories_completed=$(jq -r '.stories.completed' "$verification_file" 2>/dev/null || echo "?")
+    v_stories_total=$(jq -r '.stories.total' "$verification_file" 2>/dev/null || echo "?")
+    v_stories_failed=$(jq -r '.stories.failed' "$verification_file" 2>/dev/null || echo "0")
+    v_tests_passed=$(jq -r '.tests.passed' "$verification_file" 2>/dev/null || echo "0")
+    v_tests_failed=$(jq -r '.tests.failed' "$verification_file" 2>/dev/null || echo "0")
+    v_tests_skipped=$(jq -r '.tests.skipped' "$verification_file" 2>/dev/null || echo "0")
+    v_commits_verified=$(jq -r '.commits.verified' "$verification_file" 2>/dev/null || echo "0")
+    v_commits_missing=$(jq -r '.commits.missing' "$verification_file" 2>/dev/null || echo "0")
+    v_iterations_run=$(jq -r '.iterations.run' "$verification_file" 2>/dev/null || echo "?")
+    v_iterations_max=$(jq -r '.iterations.max' "$verification_file" 2>/dev/null || echo "?")
+    v_verification_passed=$(jq -r '.verification_passed' "$verification_file" 2>/dev/null || echo "null")
+
+    local v_status_icon="⚠️"
+    if [ "$v_verification_passed" = "true" ]; then
+      v_status_icon="✅"
+    elif [ "$v_verification_passed" = "false" ]; then
+      v_status_icon="❌"
+    fi
+
+    verification_section=$(cat <<VSEOF
+
+## Pipeline Verification $v_status_icon
+
+| Metric | Result |
+|--------|--------|
+| Stories | $v_stories_completed / $v_stories_total completed |
+| Failed stories | $v_stories_failed (exhausted retries) |
+| Iterations | $v_iterations_run / $v_iterations_max used |
+| Test runs passed | $v_tests_passed |
+| Test runs failed | $v_tests_failed |
+| Tests skipped | $v_tests_skipped |
+| Commits verified | $v_commits_verified |
+| Commits missing | $v_commits_missing |
+| Final verification | $v_verification_passed |
+VSEOF
+    )
+  fi
+
   # Build label flags with proper sanitization
   local labels=()
 
@@ -96,6 +144,7 @@ create_pr() {
 \`\`\`
 $commits
 \`\`\`
+$verification_section
 
 ## Validation Checklist
 

@@ -1986,6 +1986,221 @@ test_result "init: creates reqdrive.json with version 0.3.0" $?
 test_result "init: creates .reqdrive/runs/ directory" $?
 
 echo ""
+echo "--- Run Summary & Verification ---"
+
+# Test: write_run_status includes summary when RUN_SUMMARY_* vars are set
+(
+  mkdir -p "$TEST_TEMP/run-summary1"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  RUN_SUMMARY_ITERATIONS=5
+  RUN_SUMMARY_TESTS_PASSED=3
+  RUN_SUMMARY_TESTS_FAILED=2
+  RUN_SUMMARY_TESTS_SKIPPED=0
+  RUN_SUMMARY_COMMITS_VERIFIED=4
+  RUN_SUMMARY_COMMITS_MISSING=1
+  RUN_SUMMARY_STORIES_COMPLETED=3
+  RUN_SUMMARY_STORIES_FAILED=1
+  RUN_SUMMARY_STORIES_TOTAL=5
+  RUN_SUMMARY_VERIFICATION_PASSED=true
+
+  write_run_status "$TEST_TEMP/run-summary1" "completed" "REQ-01" "5" "0"
+
+  [ -f "$TEST_TEMP/run-summary1/run.json" ] &&
+  [ "$(jq -r '.summary.iterations_run' "$TEST_TEMP/run-summary1/run.json")" = "5" ] &&
+  [ "$(jq -r '.summary.tests_passed' "$TEST_TEMP/run-summary1/run.json")" = "3" ] &&
+  [ "$(jq -r '.summary.tests_failed' "$TEST_TEMP/run-summary1/run.json")" = "2" ] &&
+  [ "$(jq -r '.summary.commits_verified' "$TEST_TEMP/run-summary1/run.json")" = "4" ] &&
+  [ "$(jq -r '.summary.commits_missing' "$TEST_TEMP/run-summary1/run.json")" = "1" ] &&
+  [ "$(jq -r '.summary.stories_completed' "$TEST_TEMP/run-summary1/run.json")" = "3" ] &&
+  [ "$(jq -r '.summary.stories_total' "$TEST_TEMP/run-summary1/run.json")" = "5" ] &&
+  [ "$(jq -r '.summary.verification_passed' "$TEST_TEMP/run-summary1/run.json")" = "true" ]
+)
+test_result "run_status: includes summary when RUN_SUMMARY_* vars set" $?
+
+# Test: write_run_status has null summary when accumulators not set
+(
+  mkdir -p "$TEST_TEMP/run-summary2"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  unset RUN_SUMMARY_ITERATIONS
+  write_run_status "$TEST_TEMP/run-summary2" "running" "REQ-01"
+
+  [ -f "$TEST_TEMP/run-summary2/run.json" ] &&
+  [ "$(jq -r '.summary' "$TEST_TEMP/run-summary2/run.json")" = "null" ]
+)
+test_result "run_status: summary is null when accumulators not set" $?
+
+# Test: write_run_status summary is valid JSON
+(
+  mkdir -p "$TEST_TEMP/run-summary3"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  RUN_SUMMARY_ITERATIONS=2
+  RUN_SUMMARY_TESTS_PASSED=1
+  RUN_SUMMARY_TESTS_FAILED=1
+  RUN_SUMMARY_TESTS_SKIPPED=0
+  RUN_SUMMARY_COMMITS_VERIFIED=2
+  RUN_SUMMARY_COMMITS_MISSING=0
+  RUN_SUMMARY_STORIES_COMPLETED=2
+  RUN_SUMMARY_STORIES_FAILED=0
+  RUN_SUMMARY_STORIES_TOTAL=2
+  RUN_SUMMARY_VERIFICATION_PASSED=false
+
+  write_run_status "$TEST_TEMP/run-summary3" "completed" "REQ-01" "2" "0"
+  jq empty "$TEST_TEMP/run-summary3/run.json"
+)
+test_result "run_status: run.json with summary is valid JSON" $?
+
+# Test: PR body includes verification section when verification-summary.json exists
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          create) echo "https://github.com/test/repo/pull/50" ;;
+          view) echo "https://github.com/test/repo/pull/50" ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  git() {
+    case "$1" in
+      push) return 0 ;;
+      log) echo "abc1234 feat: test" ;;
+    esac
+  }
+  export -f gh git
+
+  source "$REQDRIVE_ROOT/lib/pr-create.sh"
+
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/.reqdrive/runs/req-01"
+
+  # Create a verification summary
+  cat > "$tmpdir/.reqdrive/runs/req-01/verification-summary.json" <<'VSEOF'
+{
+  "version": "0.3.0",
+  "req_id": "REQ-01",
+  "stories": {"total": 3, "completed": 2, "failed": 1, "remaining": 1},
+  "iterations": {"run": 5, "max": 10},
+  "tests": {"passed": 4, "failed": 1, "skipped": 0},
+  "commits": {"verified": 4, "missing": 1},
+  "verification_passed": false
+}
+VSEOF
+
+  # Create a PRD for the checklist
+  cat > "$tmpdir/.reqdrive/runs/req-01/prd.json" <<'PEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"Story A","acceptanceCriteria":["AC1"],"priority":1,"passes":true}
+]}
+PEOF
+
+  export REQDRIVE_PR_LABELS=""
+
+  # Capture stderr (PR body is passed to gh, which we mock — we need to inspect args)
+  # Instead, override gh to capture the body
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          create)
+            # Find --body arg
+            while [ $# -gt 0 ]; do
+              if [ "$1" = "--body" ]; then
+                echo "$2" > "$tmpdir/.pr-body"
+                break
+              fi
+              shift
+            done
+            echo "https://github.com/test/repo/pull/50"
+            return 0
+            ;;
+          view) echo "https://github.com/test/repo/pull/50" ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  export -f gh
+
+  create_pr "$tmpdir" "REQ-01" "reqdrive/req-01" "main" "" "$tmpdir/.reqdrive/runs/req-01" 2>/dev/null
+
+  [ -f "$tmpdir/.pr-body" ] &&
+  grep -q "Pipeline Verification" "$tmpdir/.pr-body" &&
+  grep -q "2 / 3 completed" "$tmpdir/.pr-body" &&
+  grep -q "5 / 10 used" "$tmpdir/.pr-body"
+)
+test_result "pr: body includes verification section from summary" $?
+
+# Test: PR body has no verification section when no summary file
+(
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+
+  tmpdir=$(mktemp -d)
+  trap "rm -rf $tmpdir" EXIT
+  mkdir -p "$tmpdir/.reqdrive/runs/req-01"
+
+  gh() {
+    case "$1" in
+      pr)
+        case "$2" in
+          create)
+            while [ $# -gt 0 ]; do
+              if [ "$1" = "--body" ]; then
+                echo "$2" > "$tmpdir/.pr-body2"
+                break
+              fi
+              shift
+            done
+            echo "https://github.com/test/repo/pull/51"
+            return 0
+            ;;
+          view) echo "https://github.com/test/repo/pull/51" ;;
+        esac
+        ;;
+    esac
+    return 0
+  }
+  git() {
+    case "$1" in
+      push) return 0 ;;
+      log) echo "abc1234 feat: test" ;;
+    esac
+  }
+  export -f gh git
+
+  source "$REQDRIVE_ROOT/lib/pr-create.sh"
+  export REQDRIVE_PR_LABELS=""
+
+  create_pr "$tmpdir" "REQ-01" "reqdrive/req-01" "main" "" "$tmpdir/.reqdrive/runs/req-01" 2>/dev/null
+
+  [ -f "$tmpdir/.pr-body2" ] &&
+  ! grep -q "Pipeline Verification" "$tmpdir/.pr-body2"
+)
+test_result "pr: body omits verification section when no summary file" $?
+
+echo ""
 echo "========================================"
 echo "  Results: $PASS passed, $FAIL failed, $SKIP skipped, $TOTAL total"
 echo "========================================"

@@ -19,6 +19,7 @@ log_error() { echo "[ERROR] $(date +%H:%M:%S) $*" >&2; }
 
 # Write or update run.json in the agent directory
 # Args: $1=agent_dir $2=status $3=req_id [$4=iteration] [$5=exit_code] [$6=pr_url]
+# Reads optional summary data from RUN_SUMMARY_* variables (set by pipeline)
 write_run_status() {
   local agent_dir="$1"
   local status="$2"
@@ -44,6 +45,26 @@ write_run_status() {
   local pr_url_json="null"
   [ "$pr_url" != "null" ] && [ -n "$pr_url" ] && pr_url_json="\"$pr_url\""
 
+  # Build summary block from accumulator variables (set during pipeline)
+  local summary_json="null"
+  if [ -n "${RUN_SUMMARY_ITERATIONS:-}" ]; then
+    summary_json=$(cat <<SUMMARY_EOF
+{
+    "iterations_run": ${RUN_SUMMARY_ITERATIONS:-0},
+    "tests_passed": ${RUN_SUMMARY_TESTS_PASSED:-0},
+    "tests_failed": ${RUN_SUMMARY_TESTS_FAILED:-0},
+    "tests_skipped": ${RUN_SUMMARY_TESTS_SKIPPED:-0},
+    "commits_verified": ${RUN_SUMMARY_COMMITS_VERIFIED:-0},
+    "commits_missing": ${RUN_SUMMARY_COMMITS_MISSING:-0},
+    "stories_completed": ${RUN_SUMMARY_STORIES_COMPLETED:-0},
+    "stories_failed": ${RUN_SUMMARY_STORIES_FAILED:-0},
+    "stories_total": ${RUN_SUMMARY_STORIES_TOTAL:-0},
+    "verification_passed": ${RUN_SUMMARY_VERIFICATION_PASSED:-null}
+  }
+SUMMARY_EOF
+    )
+  fi
+
   cat > "$run_file" <<EOF
 {
   "status": "$status",
@@ -53,7 +74,8 @@ write_run_status() {
   "updated_at": "$now",
   "current_iteration": $iteration,
   "exit_code": $exit_code_json,
-  "pr_url": $pr_url_json
+  "pr_url": $pr_url_json,
+  "summary": $summary_json
 }
 EOF
 }
@@ -701,6 +723,18 @@ EOF
   local completion_signal="<promise>COMPLETE</promise>"
   local CLAUDE_OUTPUT=""
 
+  # Pipeline result accumulators (read by write_run_status for run.json summary)
+  RUN_SUMMARY_ITERATIONS=0
+  RUN_SUMMARY_TESTS_PASSED=0
+  RUN_SUMMARY_TESTS_FAILED=0
+  RUN_SUMMARY_TESTS_SKIPPED=0
+  RUN_SUMMARY_COMMITS_VERIFIED=0
+  RUN_SUMMARY_COMMITS_MISSING=0
+  RUN_SUMMARY_STORIES_COMPLETED=0
+  RUN_SUMMARY_STORIES_FAILED=0
+  RUN_SUMMARY_STORIES_TOTAL=0
+  RUN_SUMMARY_VERIFICATION_PASSED=null
+
   # ══════════════════════════════════════════════════════════════════════
   # Phase 1: Planning (create PRD if it doesn't exist)
   # ══════════════════════════════════════════════════════════════════════
@@ -809,22 +843,32 @@ EOF
     # Extract iteration summary
     extract_iteration_summary "$CLAUDE_OUTPUT" "$agent_dir" "$i"
 
+    # Track iteration count
+    RUN_SUMMARY_ITERATIONS=$((RUN_SUMMARY_ITERATIONS + 1))
+
     # Run test command if configured (observation mode — warn, don't abort)
     if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
       log_info "Running test command: $REQDRIVE_TEST_COMMAND"
       local test_log="$agent_dir/iteration-$i.test.log"
       if eval "$REQDRIVE_TEST_COMMAND" > "$test_log" 2>&1; then
         log_info "Tests passed after iteration $i"
+        RUN_SUMMARY_TESTS_PASSED=$((RUN_SUMMARY_TESTS_PASSED + 1))
       else
         log_warn "Tests FAILED after iteration $i (see iteration-$i.test.log)"
+        RUN_SUMMARY_TESTS_FAILED=$((RUN_SUMMARY_TESTS_FAILED + 1))
       fi
+    else
+      RUN_SUMMARY_TESTS_SKIPPED=$((RUN_SUMMARY_TESTS_SKIPPED + 1))
     fi
 
     # Verify agent committed (observation mode — warn, don't abort)
     local latest_commit_msg
     latest_commit_msg=$(git log --oneline -1 --format='%s' 2>/dev/null || echo "")
-    if [[ "$latest_commit_msg" != feat:\ \[${next_story}\]* ]]; then
+    if [[ "$latest_commit_msg" == feat:\ \[${next_story}\]* ]]; then
+      RUN_SUMMARY_COMMITS_VERIFIED=$((RUN_SUMMARY_COMMITS_VERIFIED + 1))
+    else
       log_warn "Expected commit for $next_story, latest commit: $latest_commit_msg"
+      RUN_SUMMARY_COMMITS_MISSING=$((RUN_SUMMARY_COMMITS_MISSING + 1))
     fi
 
     # Increment attempt counter for this story in prd.json
@@ -854,12 +898,93 @@ EOF
     sleep 2
   done
 
-  # ── Verify completion ──
+  # ══════════════════════════════════════════════════════════════════════
+  # Phase 3: Verification (between implementation and PR creation)
+  # ══════════════════════════════════════════════════════════════════════
+
+  log_info ""
+  log_info "═══════════════════════════════════════════════════════"
+  log_info "  Phase 3: Verification"
+  log_info "═══════════════════════════════════════════════════════"
+
+  # Collect story stats from prd.json
   local final_remaining="?"
+  local stories_total=0
+  local stories_completed=0
+  local stories_failed=0
+
   if [ -f "$prd_file" ]; then
+    stories_total=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo "0")
+    stories_completed=$(jq '[.userStories[] | select(.passes == true)] | length' "$prd_file" 2>/dev/null || echo "0")
     final_remaining=$(jq '[.userStories[] | select(.passes == false)] | length' "$prd_file" 2>/dev/null || echo "?")
+
+    # Stories that exhausted their retry limit
+    local max_story_retries_check="${REQDRIVE_MAX_STORY_RETRIES:-3}"
+    stories_failed=$(jq --argjson max "$max_story_retries_check" \
+      '[.userStories[] | select(.passes == false and ((.attempts // 0) >= $max))] | length' \
+      "$prd_file" 2>/dev/null || echo "0")
   fi
 
+  RUN_SUMMARY_STORIES_TOTAL=$stories_total
+  RUN_SUMMARY_STORIES_COMPLETED=$stories_completed
+  RUN_SUMMARY_STORIES_FAILED=$stories_failed
+
+  log_info "Stories: $stories_completed/$stories_total completed, $stories_failed permanently failed"
+  log_info "Tests: $RUN_SUMMARY_TESTS_PASSED passed, $RUN_SUMMARY_TESTS_FAILED failed, $RUN_SUMMARY_TESTS_SKIPPED skipped"
+  log_info "Commits: $RUN_SUMMARY_COMMITS_VERIFIED verified, $RUN_SUMMARY_COMMITS_MISSING missing"
+
+  # Run final verification test if testCommand is configured
+  local verification_passed=true
+  local verification_log="$agent_dir/verification.test.log"
+
+  if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
+    log_info "Running final verification: $REQDRIVE_TEST_COMMAND"
+    if eval "$REQDRIVE_TEST_COMMAND" > "$verification_log" 2>&1; then
+      log_info "Final verification PASSED"
+    else
+      log_warn "Final verification FAILED (see verification.test.log)"
+      verification_passed=false
+    fi
+  else
+    log_info "No testCommand configured, skipping final verification"
+    verification_passed=null
+  fi
+
+  RUN_SUMMARY_VERIFICATION_PASSED=$verification_passed
+
+  # Write verification summary for PR enrichment and pipeline consumption
+  local verification_file="$agent_dir/verification-summary.json"
+  cat > "$verification_file" <<VEOF
+{
+  "version": "0.3.0",
+  "req_id": "$req_id",
+  "timestamp": "$(date -Iseconds)",
+  "stories": {
+    "total": $stories_total,
+    "completed": $stories_completed,
+    "failed": $stories_failed,
+    "remaining": $([ "$final_remaining" = "?" ] && echo "null" || echo "$final_remaining")
+  },
+  "iterations": {
+    "run": $RUN_SUMMARY_ITERATIONS,
+    "max": $max_iterations
+  },
+  "tests": {
+    "passed": $RUN_SUMMARY_TESTS_PASSED,
+    "failed": $RUN_SUMMARY_TESTS_FAILED,
+    "skipped": $RUN_SUMMARY_TESTS_SKIPPED
+  },
+  "commits": {
+    "verified": $RUN_SUMMARY_COMMITS_VERIFIED,
+    "missing": $RUN_SUMMARY_COMMITS_MISSING
+  },
+  "verification_passed": $verification_passed
+}
+VEOF
+
+  log_info "Verification summary written to verification-summary.json"
+
+  # Decide PR draft status based on verification results
   if [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ]; then
     log_warn "Agent did not complete all stories ($final_remaining remaining)"
     log_warn "Creating draft PR for review"
@@ -874,7 +999,12 @@ EOF
   source "$REQDRIVE_ROOT/lib/pr-create.sh"
 
   local draft_flag=""
-  [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ] && draft_flag="--draft"
+  if [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ]; then
+    draft_flag="--draft"
+  elif [ "$verification_passed" = "false" ]; then
+    log_warn "Final verification failed — creating draft PR"
+    draft_flag="--draft"
+  fi
 
   local pr_url=""
   if pr_url=$(create_pr "$REQDRIVE_PROJECT_ROOT" "$req_id" "$branch" "$base_branch" "$draft_flag" "$agent_dir"); then
