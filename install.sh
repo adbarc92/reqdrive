@@ -47,9 +47,11 @@ if [ -n "$RC_FILE" ]; then
   if [ -f "$RC_FILE" ] && grep -qF "$INSTALL_DIR/bin" "$RC_FILE" 2>/dev/null; then
     echo "PATH already configured in $RC_FILE"
   else
-    echo "" >> "$RC_FILE"
-    echo "# reqdrive" >> "$RC_FILE"
-    echo "$PATH_LINE" >> "$RC_FILE"
+    {
+      echo ""
+      echo "# reqdrive"
+      echo "$PATH_LINE"
+    } >> "$RC_FILE"
     echo "Added to $RC_FILE: $PATH_LINE"
   fi
 fi
