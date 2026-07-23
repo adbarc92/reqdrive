@@ -67,3 +67,15 @@ jobs:
 
       - name: Run E2E tests
         run: bats --formatter tap tests/e2e/
+
+  oracle-gate:
+    name: Freeze gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce the frozen oracle
+        run: bash tests/oracle-gate.sh
+
+      - name: Prove the gate rules fire
+        run: bash tests/gate-selftest.sh
