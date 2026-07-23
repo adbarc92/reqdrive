@@ -705,7 +705,7 @@ echo "--- Error Codes Tests ---"
   [ "$EXIT_USER_ABORT" = "7" ] &&
   [ "$EXIT_PREFLIGHT_FAILED" = "8" ]
 )
-test_result "errors: defines all exit codes (0-8)" $?
+test_result "errors: defines the base exit codes 0-8" $?
 
 # Test: EXIT_MESSAGES has entry for every exit code
 (
@@ -721,7 +721,7 @@ test_result "errors: defines all exit codes (0-8)" $?
   [ -n "${EXIT_MESSAGES[7]}" ] &&
   [ -n "${EXIT_MESSAGES[8]}" ]
 )
-test_result "errors: EXIT_MESSAGES covers all codes" $?
+test_result "errors: EXIT_MESSAGES covers the base codes 0-8" $?
 
 # Test: get_exit_message returns known message
 (
