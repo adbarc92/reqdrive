@@ -83,6 +83,18 @@ fi
 # ran.txt is built by pure bash string parsing and never carries \r, so
 # without stripping here, comm below would see zero overlap between the
 # two files on those platforms and misfire R1+R6 on every locked test.
+#
+# Why isn't the same tr needed on the single-value jq calls below (e.g.
+# `locked_suite=$(jq -r .suiteSha256 "$LOCK")`)? Those go through $(...)
+# command substitution, and bash's command substitution strips trailing
+# newline(s) off the captured output wholesale — verified: on this affected
+# jq build, `$(jq -r .foo file)` for a one-line "val\r\n" result comes back
+# as plain "val", no \r. That stripping only ever removes a *trailing*
+# run at the very end of the output, which is exactly where a single-value
+# result's \r lives. Multi-line output has no such luck: every line except
+# the last carries its \r in the *middle* of the stream once fed through a
+# pipe (`jq ... | tr ... | sort`), and a pipe does no newline stripping at
+# all — hence the explicit `tr -d '\r'` here.
 jq -r '.tests[].name' "$LOCK" | tr -d '\r' | sort > "$WORK/locked.txt"
 LOCK_COUNT=$(jq '.tests | length' "$LOCK")
 RAN_COUNT=$(wc -l < "$WORK/ran.txt" | tr -d ' ')

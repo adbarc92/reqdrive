@@ -41,10 +41,11 @@ mut_r7_body() {
   sed -i '0,/^  set -e$/s/^  set -e$/  set -e\n  true/' "$1/tests/simple-test.sh"
 }
 mut_r2_fail() {
-  # Break a library function so a locked test genuinely fails, then re-lock
-  # the suite hash so R7 does not mask R2.
+  # Break a library function so a locked test genuinely fails. No re-lock
+  # needed: lib/ is outside the gate's hash surface (only tests/simple-test.sh
+  # and tests/oracle-gate.sh are hashed), so R7 can never fire from this
+  # mutation and R2 fires cleanly on its own.
   sed -i 's|^load_checkpoint() {|load_checkpoint() {\n  return 1|' "$1/lib/run.sh"
-  (cd "$1" && bash tests/oracle-gate.sh --accept >/dev/null 2>&1)
 }
 mut_r6_unregistered() {
   cat >> "$1/tests/simple-test.sh" <<'EOF'
