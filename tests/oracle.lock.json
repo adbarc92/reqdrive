@@ -1,0 +1,645 @@
+{
+  "version": "0.3.0",
+  "generated": "2026-07-23",
+  "environment": {
+    "claude": false
+  },
+  "suiteSha256": "95331fe120a3131c0a3d061db2cb2c9ad24f31048354afb85bd00255b4e81a07",
+  "gateSha256": "cb8af59f8bf150da486e40b7e9138c932e477cb540bb92ca0fb27e9750afa3a8",
+  "tests": [
+    {
+      "name": "checkpoint: load returns empty for mismatched req_id",
+      "story": "US-RUN-10"
+    },
+    {
+      "name": "checkpoint: load returns empty for missing file",
+      "story": "US-RUN-11"
+    },
+    {
+      "name": "checkpoint: load returns path for matching req_id",
+      "story": "US-RUN-09"
+    },
+    {
+      "name": "checkpoint: records completed story IDs from PRD",
+      "story": "US-RUN-08"
+    },
+    {
+      "name": "checkpoint: save_checkpoint creates valid checkpoint.json",
+      "story": "US-RUN-07"
+    },
+    {
+      "name": "checkpoint: save_checkpoint includes last_commit_sha",
+      "story": "US-RUN-12"
+    },
+    {
+      "name": "cli: --help shows security flags",
+      "story": "US-CLI-03"
+    },
+    {
+      "name": "cli: --help shows usage",
+      "story": "US-CLI-02"
+    },
+    {
+      "name": "cli: logs with missing log file shows error",
+      "story": "US-CLI-09"
+    },
+    {
+      "name": "cli: migrate adds version to versionless config",
+      "story": "US-CLI-10"
+    },
+    {
+      "name": "cli: migrate skips config that already has version",
+      "story": "US-CLI-11"
+    },
+    {
+      "name": "cli: orchestrate shows 'coming soon'",
+      "story": "US-CLI-13"
+    },
+    {
+      "name": "cli: plan without args shows usage",
+      "story": "US-CLI-12",
+      "conditional": "claude"
+    },
+    {
+      "name": "cli: run requires REQ-ID argument",
+      "story": "US-CLI-06",
+      "conditional": "claude"
+    },
+    {
+      "name": "cli: status with no runs shows 'No runs found'",
+      "story": "US-CLI-07"
+    },
+    {
+      "name": "cli: status with run.json shows status fields",
+      "story": "US-CLI-08"
+    },
+    {
+      "name": "cli: unknown command shows error",
+      "story": "US-CLI-04"
+    },
+    {
+      "name": "cli: validate command works",
+      "story": "US-CLI-05"
+    },
+    {
+      "name": "cli: --version shows 0.3.0",
+      "story": "US-CLI-01"
+    },
+    {
+      "name": "errors: defines the base exit codes 0-8",
+      "story": "US-ERR-01"
+    },
+    {
+      "name": "errors: die defaults to exit code 1",
+      "story": "US-ERR-07"
+    },
+    {
+      "name": "errors: die exits with code and custom message",
+      "story": "US-ERR-05"
+    },
+    {
+      "name": "errors: die uses EXIT_MESSAGES when no custom message",
+      "story": "US-ERR-06"
+    },
+    {
+      "name": "errors: die_on_error exits after failure",
+      "story": "US-ERR-09"
+    },
+    {
+      "name": "errors: die_on_error is silent after success",
+      "story": "US-ERR-08"
+    },
+    {
+      "name": "errors: EXIT_MESSAGES covers the base codes 0-8",
+      "story": "US-ERR-02"
+    },
+    {
+      "name": "errors: get_exit_message returns correct messages",
+      "story": "US-ERR-03"
+    },
+    {
+      "name": "errors: get_exit_message returns 'Unknown error' for unknown code",
+      "story": "US-ERR-04"
+    },
+    {
+      "name": "find_manifest: finds manifest in current dir",
+      "story": "US-CFG-01"
+    },
+    {
+      "name": "find_manifest: finds manifest in parent dir",
+      "story": "US-CFG-02"
+    },
+    {
+      "name": "find_manifest: returns 1 when no manifest found",
+      "story": "US-CFG-03"
+    },
+    {
+      "name": "get_req_file: finds matching requirement",
+      "story": "US-CFG-10"
+    },
+    {
+      "name": "get_req_file: respects custom requirementsDir",
+      "story": "US-CFG-12"
+    },
+    {
+      "name": "get_req_file: returns 1 when no match",
+      "story": "US-CFG-11"
+    },
+    {
+      "name": "get_req_file: returns full path to matched file",
+      "story": "US-CFG-19"
+    },
+    {
+      "name": "harness: aborts when mktemp fails",
+      "story": "US-HARN-01"
+    },
+    {
+      "name": "hook: executes command with env vars",
+      "story": "US-RUN-23"
+    },
+    {
+      "name": "hook: handles failing hook gracefully",
+      "story": "US-RUN-25"
+    },
+    {
+      "name": "hook: no-op when hook is empty",
+      "story": "US-RUN-24"
+    },
+    {
+      "name": "impl prompt: neutralizes $(cmd) in story title",
+      "story": "US-RUN-28"
+    },
+    {
+      "name": "impl prompt: neutralizes ${VAR} in acceptance criteria",
+      "story": "US-RUN-30"
+    },
+    {
+      "name": "impl prompt: neutralizes backticks in story description",
+      "story": "US-RUN-29"
+    },
+    {
+      "name": "init: creates .reqdrive/runs/ directory",
+      "story": "US-INIT-02"
+    },
+    {
+      "name": "init: creates reqdrive.json with version 0.3.0",
+      "story": "US-INIT-01"
+    },
+    {
+      "name": "load_config: defaults maxStoryRetries to 3",
+      "story": "US-CFG-16"
+    },
+    {
+      "name": "load_config: defaults prLabels to agent-generated",
+      "story": "US-CFG-14"
+    },
+    {
+      "name": "load_config: defaults projectName to empty string",
+      "story": "US-CFG-18"
+    },
+    {
+      "name": "load_config: defaults testCommand to empty string",
+      "story": "US-CFG-15"
+    },
+    {
+      "name": "load_config: exits on incompatible schema version",
+      "story": "US-CFG-09"
+    },
+    {
+      "name": "load_config: exits with error when no manifest",
+      "story": "US-CFG-08"
+    },
+    {
+      "name": "load_config: joins prLabels with commas",
+      "story": "US-CFG-07"
+    },
+    {
+      "name": "load_config: loads all settings",
+      "story": "US-CFG-04"
+    },
+    {
+      "name": "load_config: loads custom maxStoryRetries",
+      "story": "US-CFG-17"
+    },
+    {
+      "name": "load_config: sets REQDRIVE_MANIFEST path",
+      "story": "US-CFG-06"
+    },
+    {
+      "name": "load_config: sets REQDRIVE_PROJECT_ROOT to manifest dir",
+      "story": "US-CFG-13"
+    },
+    {
+      "name": "load_config: uses defaults for missing fields",
+      "story": "US-CFG-05"
+    },
+    {
+      "name": "pr: body includes verification section from summary",
+      "story": "US-PR-04"
+    },
+    {
+      "name": "pr: body omits verification section when no summary file",
+      "story": "US-PR-05"
+    },
+    {
+      "name": "pr: create_pr outputs URL to stdout",
+      "story": "US-PR-01"
+    },
+    {
+      "name": "pr: create_pr retries without labels on failure",
+      "story": "US-PR-02"
+    },
+    {
+      "name": "pr: create_pr returns non-zero on gh failure without labels",
+      "story": "US-PR-03"
+    },
+    {
+      "name": "preflight: check_base_branch_exists passes for local branch",
+      "story": "US-PRE-04"
+    },
+    {
+      "name": "preflight: check_clean_working_tree fails on dirty repo",
+      "story": "US-PRE-03"
+    },
+    {
+      "name": "preflight: check_clean_working_tree passes on clean repo",
+      "story": "US-PRE-02"
+    },
+    {
+      "name": "preflight: check_git_repo fails outside repo",
+      "story": "US-PRE-01"
+    },
+    {
+      "name": "preflight: check_requirement_exists finds matching file",
+      "story": "US-PRE-06"
+    },
+    {
+      "name": "preflight: check_requirements_dir passes with .md files",
+      "story": "US-PRE-05"
+    },
+    {
+      "name": "prompt: build_planning_prompt includes PRD schema",
+      "story": "US-RUN-21"
+    },
+    {
+      "name": "prompt: build_planning_prompt includes requirement content",
+      "story": "US-RUN-20"
+    },
+    {
+      "name": "prompt: build_planning_prompt preserves dollar signs in content",
+      "story": "US-RUN-22"
+    },
+    {
+      "name": "review: config defaults reviewCommand to empty string",
+      "story": "US-REV-01"
+    },
+    {
+      "name": "review: config reads reviewCommand from JSON",
+      "story": "US-REV-02"
+    },
+    {
+      "name": "review: schema accepts string reviewCommand",
+      "story": "US-REV-03"
+    },
+    {
+      "name": "review: schema rejects non-string reviewCommand",
+      "story": "US-REV-04"
+    },
+    {
+      "name": "review: update_pr_with_review formats findings correctly",
+      "story": "US-REV-05"
+    },
+    {
+      "name": "run_status: creates valid run.json with all fields",
+      "story": "US-RUN-01"
+    },
+    {
+      "name": "run_status: includes summary when RUN_SUMMARY_* vars set",
+      "story": "US-RUN-04"
+    },
+    {
+      "name": "run_status: preserves started_at on subsequent calls",
+      "story": "US-RUN-02"
+    },
+    {
+      "name": "run_status: records current PID",
+      "story": "US-RUN-03"
+    },
+    {
+      "name": "run_status: run.json with summary is valid JSON",
+      "story": "US-RUN-06"
+    },
+    {
+      "name": "run_status: summary is null when accumulators not set",
+      "story": "US-RUN-05"
+    },
+    {
+      "name": "sanitize_for_prompt: clean content passes through unchanged",
+      "story": "US-SAN-02"
+    },
+    {
+      "name": "sanitize_for_prompt: empty input returns empty",
+      "story": "US-SAN-03"
+    },
+    {
+      "name": "sanitize_for_prompt: escapes ${VAR} expansion",
+      "story": "US-SAN-04"
+    },
+    {
+      "name": "sanitize_for_prompt: escapes backticks and dollar signs",
+      "story": "US-SAN-01"
+    },
+    {
+      "name": "sanitize_label: clean label passes through",
+      "story": "US-SAN-05"
+    },
+    {
+      "name": "sanitize_label: empty input returns empty",
+      "story": "US-SAN-10"
+    },
+    {
+      "name": "sanitize_label: removes ampersands",
+      "story": "US-SAN-18"
+    },
+    {
+      "name": "sanitize_label: removes backslashes",
+      "story": "US-SAN-21"
+    },
+    {
+      "name": "sanitize_label: removes dollar signs",
+      "story": "US-SAN-20"
+    },
+    {
+      "name": "sanitize_label: removes pipes",
+      "story": "US-SAN-17"
+    },
+    {
+      "name": "sanitize_label: removes redirect characters",
+      "story": "US-SAN-19"
+    },
+    {
+      "name": "sanitize_label: removes semicolons",
+      "story": "US-SAN-07"
+    },
+    {
+      "name": "sanitize_label: replaces backticks with single quotes",
+      "story": "US-SAN-22"
+    },
+    {
+      "name": "sanitize_label: replaces double quotes with single",
+      "story": "US-SAN-08"
+    },
+    {
+      "name": "sanitize_label: strips whitespace",
+      "story": "US-SAN-06"
+    },
+    {
+      "name": "sanitize_label: truncates to 50 chars",
+      "story": "US-SAN-09"
+    },
+    {
+      "name": "schema: check_schema_version accepts older minor (0.2.0)",
+      "story": "US-SCH-05"
+    },
+    {
+      "name": "schema: check_schema_version accepts patch difference (0.3.1)",
+      "story": "US-SCH-07"
+    },
+    {
+      "name": "schema: check_schema_version passes for nonexistent file",
+      "story": "US-SCH-04"
+    },
+    {
+      "name": "schema: check_schema_version passes on exact version",
+      "story": "US-SCH-01"
+    },
+    {
+      "name": "schema: check_schema_version rejects incompatible major",
+      "story": "US-SCH-03"
+    },
+    {
+      "name": "schema: check_schema_version warns on missing version",
+      "story": "US-SCH-02"
+    },
+    {
+      "name": "schema: check_schema_version warns on newer minor (0.9.0)",
+      "story": "US-SCH-06"
+    },
+    {
+      "name": "schema: validate_checkpoint_schema passes for valid checkpoint",
+      "story": "US-SCH-20"
+    },
+    {
+      "name": "schema: validate_checkpoint_schema rejects invalid JSON",
+      "story": "US-SCH-21"
+    },
+    {
+      "name": "schema: validate_checkpoint_schema rejects missing branch",
+      "story": "US-SCH-31"
+    },
+    {
+      "name": "schema: validate_checkpoint_schema rejects missing iteration",
+      "story": "US-SCH-32"
+    },
+    {
+      "name": "schema: validate_checkpoint_schema rejects missing req_id",
+      "story": "US-SCH-22"
+    },
+    {
+      "name": "schema: validate_checkpoint_schema rejects non-number iteration",
+      "story": "US-SCH-23"
+    },
+    {
+      "name": "schema: validate_config_schema passes for empty object",
+      "story": "US-SCH-09"
+    },
+    {
+      "name": "schema: validate_config_schema passes for valid config",
+      "story": "US-SCH-08"
+    },
+    {
+      "name": "schema: validate_config_schema rejects invalid JSON",
+      "story": "US-SCH-10"
+    },
+    {
+      "name": "schema: validate_config_schema rejects non-array prLabels",
+      "story": "US-SCH-25"
+    },
+    {
+      "name": "schema: validate_config_schema rejects non-number maxIterations",
+      "story": "US-SCH-24"
+    },
+    {
+      "name": "schema: validate_config_schema rejects non-string requirementsDir",
+      "story": "US-SCH-11"
+    },
+    {
+      "name": "schema: validate_config_schema reports multiple type errors",
+      "story": "US-SCH-12"
+    },
+    {
+      "name": "schema: validate_prd_schema passes for valid PRD",
+      "story": "US-SCH-13"
+    },
+    {
+      "name": "schema: validate_prd_schema passes when priority is missing",
+      "story": "US-SCH-34"
+    },
+    {
+      "name": "schema: validate_prd_schema passes with empty stories array",
+      "story": "US-SCH-17"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects invalid JSON",
+      "story": "US-SCH-14"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects missing project",
+      "story": "US-SCH-15"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects missing sourceReq",
+      "story": "US-SCH-26"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects missing userStories",
+      "story": "US-SCH-27"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects non-array acceptanceCriteria",
+      "story": "US-SCH-19"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects non-array userStories",
+      "story": "US-SCH-16"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects non-boolean passes",
+      "story": "US-SCH-30"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects non-number priority",
+      "story": "US-SCH-33"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects story missing acceptanceCriteria",
+      "story": "US-SCH-29"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects story missing id",
+      "story": "US-SCH-18"
+    },
+    {
+      "name": "schema: validate_prd_schema rejects story missing title",
+      "story": "US-SCH-28"
+    },
+    {
+      "name": "story: get_story_details returns correct story by ID",
+      "story": "US-RUN-16"
+    },
+    {
+      "name": "story: select_next_story returns empty for missing PRD",
+      "story": "US-RUN-15"
+    },
+    {
+      "name": "story: select_next_story returns empty when all exhausted",
+      "story": "US-RUN-19"
+    },
+    {
+      "name": "story: select_next_story returns empty when all pass",
+      "story": "US-RUN-14"
+    },
+    {
+      "name": "story: select_next_story returns lowest-priority incomplete",
+      "story": "US-RUN-13"
+    },
+    {
+      "name": "story: select_next_story returns story with attempts < max",
+      "story": "US-RUN-18"
+    },
+    {
+      "name": "story: select_next_story skips stories with attempts >= max",
+      "story": "US-RUN-17"
+    },
+    {
+      "name": "summary: extract_iteration_summary extracts valid block",
+      "story": "US-RUN-26"
+    },
+    {
+      "name": "summary: handles missing summary gracefully",
+      "story": "US-RUN-27"
+    },
+    {
+      "name": "validate: fails for invalid JSON",
+      "story": "US-VAL-02"
+    },
+    {
+      "name": "validate: passes for valid manifest",
+      "story": "US-VAL-01"
+    },
+    {
+      "name": "validate_file_path: passes for normal relative path",
+      "story": "US-SAN-15"
+    },
+    {
+      "name": "validate_file_path: rejects .. traversal",
+      "story": "US-SAN-16"
+    },
+    {
+      "name": "validate_file_path: rejects mid-path .. traversal",
+      "story": "US-SAN-32"
+    },
+    {
+      "name": "validate_requirement_content: clean content returns 0",
+      "story": "US-SAN-11"
+    },
+    {
+      "name": "validate_requirement_content: detects ${} expansion",
+      "story": "US-SAN-23"
+    },
+    {
+      "name": "validate_requirement_content: detects &&sudo",
+      "story": "US-SAN-30"
+    },
+    {
+      "name": "validate_requirement_content: detects backtick substitution",
+      "story": "US-SAN-14"
+    },
+    {
+      "name": "validate_requirement_content: detects chmod 777",
+      "story": "US-SAN-28"
+    },
+    {
+      "name": "validate_requirement_content: detects curl pipe to sh",
+      "story": "US-SAN-26"
+    },
+    {
+      "name": "validate_requirement_content: detects eval",
+      "story": "US-SAN-27"
+    },
+    {
+      "name": "validate_requirement_content: detects pipe to sudo",
+      "story": "US-SAN-31"
+    },
+    {
+      "name": "validate_requirement_content: detects redirect to abs path",
+      "story": "US-SAN-24"
+    },
+    {
+      "name": "validate_requirement_content: detects rm -rf /",
+      "story": "US-SAN-25"
+    },
+    {
+      "name": "validate_requirement_content: detects semicolon-chained rm",
+      "story": "US-SAN-29"
+    },
+    {
+      "name": "validate_requirement_content: returns 1 in strict mode",
+      "story": "US-SAN-13"
+    },
+    {
+      "name": "validate_requirement_content: warns but returns 0 in non-strict",
+      "story": "US-SAN-12"
+    }
+  ]
+}
