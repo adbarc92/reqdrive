@@ -1288,6 +1288,9 @@ test_result "impl prompt: neutralizes \$(cmd) in story title" $?
   # Backtick command substitution must not produce raw command output
   # sanitize_for_prompt replaces backticks with single quotes
   ! grep -q '`whoami`' "$prompt_file"
+  # Positive: the sanitized description must actually be present.
+  grep -q "Use 'whoami' to attack" "$prompt_file"
+  grep -q '\*\*Title:\*\* Safe title' "$prompt_file"
 )
 test_result "impl prompt: neutralizes backticks in story description" $?
 
@@ -1309,6 +1312,9 @@ test_result "impl prompt: neutralizes backticks in story description" $?
 
   # ${HOME} must not have been expanded to the actual home directory
   ! grep -q "$HOME" "$prompt_file"
+  # Positive: the criterion text must actually be present.
+  grep -q 'Check \\${HOME} variable' "$prompt_file"
+  grep -q 'US-003' "$prompt_file"
 )
 test_result "impl prompt: neutralizes \${VAR} in acceptance criteria" $?
 
