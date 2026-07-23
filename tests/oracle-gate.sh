@@ -76,4 +76,81 @@ if [ "$MODE" = "--accept" ]; then
   exit 0
 fi
 
-echo "oracle-gate: parsed $(wc -l < "$WORK/results.tsv" | tr -d ' ') result lines, suite exit $SUITE_RC"
+[ -f "$LOCK" ] || { echo "FATAL: no lock at $LOCK — run --accept first" >&2; exit 1; }
+
+# tr strips \r: some jq builds (e.g. native Windows/chocolatey) write
+# multi-line -r output in CRT text mode, appending \r before every \n.
+# ran.txt is built by pure bash string parsing and never carries \r, so
+# without stripping here, comm below would see zero overlap between the
+# two files on those platforms and misfire R1+R6 on every locked test.
+jq -r '.tests[].name' "$LOCK" | tr -d '\r' | sort > "$WORK/locked.txt"
+LOCK_COUNT=$(jq '.tests | length' "$LOCK")
+RAN_COUNT=$(wc -l < "$WORK/ran.txt" | tr -d ' ')
+FAIL_COUNT=$(awk -F'\t' '$1=="FAIL"' "$WORK/results.tsv" | wc -l | tr -d ' ')
+
+fail() { echo "GATE FAIL [$1] $2" >&2; VERDICT=1; }
+VERDICT=0
+
+# ── R7: file integrity ──────────────────────────────────────────────────
+locked_suite=$(jq -r .suiteSha256 "$LOCK")
+locked_gate=$(jq -r .gateSha256 "$LOCK")
+actual_suite=$(hash_file "$SUITE")
+actual_gate=$(hash_file "$GATE")
+if [ "$locked_suite" != "$actual_suite" ]; then
+  fail R7 "NEEDS_HUMAN: tests/simple-test.sh changed (locked $locked_suite, actual $actual_suite). Review the diff, then re-lock with --accept."
+fi
+if [ "$locked_gate" != "$actual_gate" ]; then
+  fail R7 "NEEDS_HUMAN: tests/oracle-gate.sh changed (locked $locked_gate, actual $actual_gate). Review the diff, then re-lock with --accept."
+fi
+
+# ── R2: a locked test reported FAIL ─────────────────────────────────────
+while IFS=$'\t' read -r verdict name; do
+  [ "$verdict" = "FAIL" ] || continue
+  if grep -qxF "$name" "$WORK/locked.txt"; then
+    fail R2 "baseline weakened: '$name' FAILED"
+  fi
+done < "$WORK/results.tsv"
+
+# ── R3: a locked test reported SKIP (conditional entries exempted) ───────
+while IFS=$'\t' read -r verdict name; do
+  [ "$verdict" = "SKIP" ] || continue
+  grep -qxF "$name" "$WORK/locked.txt" || continue
+  cond=$(jq -r --arg n "$name" '.tests[] | select(.name == $n) | .conditional // ""' "$LOCK")
+  case "$cond" in
+    "")
+      fail R3 "silent weakening: '$name' SKIPPED and is not conditional"
+      ;;
+    claude)
+      if command -v claude >/dev/null; then
+        fail R3 "'$name' SKIPPED but its condition (claude) is met"
+      fi
+      ;;
+    *)
+      fail R3 "unknown conditional '$cond' on '$name' — the enum is {claude}"
+      ;;
+  esac
+done < "$WORK/results.tsv"
+
+# ── R6: a test ran that the lock does not know about ────────────────────
+unregistered=$(comm -23 "$WORK/ran.txt" "$WORK/locked.txt")
+if [ -n "$unregistered" ]; then
+  fail R6 "NEEDS_HUMAN: unregistered tests ran; add them with --accept:"
+  printf '%s\n' "$unregistered" | sed 's/^/    /' >&2
+fi
+
+# ── R1: a locked test did not run (diagnostic) ──────────────────────────
+missing=$(comm -13 "$WORK/ran.txt" "$WORK/locked.txt")
+if [ -n "$missing" ]; then
+  fail R1 "locked tests did not run (renamed or deleted):"
+  printf '%s\n' "$missing" | sed 's/^/    /' >&2
+fi
+
+# ── R0: truncation, only when nothing failed ────────────────────────────
+if [ "$RAN_COUNT" -lt "$LOCK_COUNT" ] && [ "$FAIL_COUNT" -eq 0 ]; then
+  fail R0 "SUITE_TRUNCATED: $RAN_COUNT of $LOCK_COUNT results emitted, no FAIL parsed"
+fi
+
+if [ "$VERDICT" -eq 0 ]; then
+  echo "oracle-gate: OK — $RAN_COUNT/$LOCK_COUNT locked tests ran, suite exit $SUITE_RC"
+fi
+exit "$VERDICT"

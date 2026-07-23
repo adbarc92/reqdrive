@@ -2,10 +2,10 @@
   "version": "0.3.0",
   "generated": "2026-07-23",
   "environment": {
-    "claude": false
+    "claude": true
   },
   "suiteSha256": "95331fe120a3131c0a3d061db2cb2c9ad24f31048354afb85bd00255b4e81a07",
-  "gateSha256": "cb8af59f8bf150da486e40b7e9138c932e477cb540bb92ca0fb27e9750afa3a8",
+  "gateSha256": "3b72427ed35ac74de23b0f8e7a2c3ba89970b0840fe7c0d006917eb6779343c2",
   "tests": [
     {
       "name": "checkpoint: load returns empty for mismatched req_id",
