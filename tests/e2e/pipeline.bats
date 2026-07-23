@@ -143,7 +143,7 @@ MOCKEOF
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # Check branch was created
-  git branch | grep -q "reqdrive/req-01" || skip "Branch creation requires clean git state"
+  git branch | grep -q "reqdrive/req-01"
 }
 
 # ============================================================================
@@ -220,7 +220,7 @@ MOCKEOF
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # Check prompt contains the requirement (planning prompt)
-  grep -q "XYZ123" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" || skip "Prompt not created yet"
+  grep -q "XYZ123" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md"
 }
 
 @test "E2E: planning prompt contains planning instructions" {
@@ -250,7 +250,7 @@ MOCKEOF
 
   # The initial prompt should be a planning prompt (since no PRD existed)
   # Check for planning-phase language in the iteration log
-  [[ -f "$TEST_TEMP_DIR/.reqdrive/runs/req-01/iteration-plan-1.log" ]] || skip "Planning log not created"
+  [[ -f "$TEST_TEMP_DIR/.reqdrive/runs/req-01/iteration-plan-1.log" ]]
 }
 
 # ============================================================================
@@ -298,8 +298,8 @@ EOF
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # The prompt should contain the story ID (deterministically selected US-001)
-  grep -q "US-001" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" || skip "Prompt not created"
-  grep -q "First story" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md" || skip "Story title not in prompt"
+  grep -q "US-001" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md"
+  grep -q "First story" "$TEST_TEMP_DIR/.reqdrive/runs/req-01/prompt.md"
 }
 
 # ============================================================================
@@ -335,6 +335,6 @@ EOF
   timeout 30 bash "$REQDRIVE_ROOT/bin/reqdrive" run REQ-01 2>&1 || true
 
   # Check model was used
-  grep -q "claude-opus-4-5-20251101" /tmp/claude-args.log 2>/dev/null || skip "Claude args not captured"
+  grep -q "claude-opus-4-5-20251101" /tmp/claude-args.log
   rm -f /tmp/claude-args.log
 }
