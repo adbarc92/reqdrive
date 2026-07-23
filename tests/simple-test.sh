@@ -53,8 +53,9 @@ test_skip() {
 }
 
 # Create temp directory
-TEST_TEMP=$(mktemp -d)
-trap "rm -rf $TEST_TEMP" EXIT
+TEST_TEMP=$(mktemp -d) || { echo "FATAL: mktemp failed" >&2; exit 1; }
+[ -n "$TEST_TEMP" ] && [ -d "$TEST_TEMP" ] || { echo "FATAL: bad TEST_TEMP" >&2; exit 1; }
+trap 'rm -rf "$TEST_TEMP"' EXIT
 
 echo "========================================"
 echo "  reqdrive v0.3.0 simple test suite"
@@ -740,7 +741,7 @@ echo "--- Preflight Tests ---"
 # Test: check_git_repo fails outside git repo
 (
   cd "$TEST_TEMP"
-  rm -rf .git 2>/dev/null || true
+  rm -rf "$TEST_TEMP/.git" 2>/dev/null || true
   source "$REQDRIVE_ROOT/lib/errors.sh"
   source "$REQDRIVE_ROOT/lib/preflight.sh"
   ! check_git_repo 2>/dev/null
@@ -2302,6 +2303,25 @@ EOF
   grep -q "warning" "$tmpdir/.updated-body"
 )
 test_result "review: update_pr_with_review formats findings correctly" $?
+
+echo ""
+echo "--- Harness Safety ---"
+
+# Test: suite refuses to run when mktemp fails
+(
+  set -e
+  fake_bin="$TEST_TEMP/fakebin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/mktemp" <<'MKEOF'
+#!/usr/bin/env bash
+exit 1
+MKEOF
+  chmod +x "$fake_bin/mktemp"
+  out=$(PATH="$fake_bin:$PATH" bash "$REQDRIVE_ROOT/tests/simple-test.sh" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ]
+  echo "$out" | grep -q "FATAL: mktemp failed"
+)
+test_result "harness: aborts when mktemp fails" $?
 
 echo ""
 echo "========================================"
