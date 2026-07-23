@@ -26,7 +26,7 @@ jobs:
         run: shellcheck install.sh
 
       - name: Lint test scripts
-        run: shellcheck tests/simple-test.sh tests/run-tests.sh tests/mutate.sh tests/spec-map.sh tests/oracle-gate.sh tests/gate-selftest.sh
+        run: shellcheck tests/simple-test.sh tests/run-tests.sh tests/mutate.sh tests/spec-map.sh tests/oracle-gate.sh tests/gate-selftest.sh tests/lib/pipeline-harness.sh
 
   syntax-check:
     name: Bash syntax check

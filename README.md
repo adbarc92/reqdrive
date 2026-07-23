@@ -20,6 +20,7 @@ Uses a two-phase architecture: planning (PRD generation) followed by determinist
 - `git`
 - `gh` (GitHub CLI, authenticated)
 - `claude` (Claude Code CLI — only needed for `run`/`launch` commands)
+- `timeout` and `sha256sum` (GNU coreutils — present by default on Linux, macOS via `brew install coreutils`, and in Git-Bash/MSYS2)
 
 **Windows Users:** reqdrive requires a Bash environment. Use Git Bash or WSL2.
 

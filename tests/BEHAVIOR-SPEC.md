@@ -1154,3 +1154,14 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a test runner,
 **When** `mktemp -d` fails and the suite is invoked,
 **Then** it prints `FATAL: mktemp failed` and exits non-zero before any assertion runs, so no assertion can operate on an empty `TEST_TEMP`.
+
+---
+
+## Module 12: pipeline harness
+
+### US-PIPE-01: A scripted run drives run_pipeline through to PR creation
+**Test:** `pipeline: scripted run reaches PR creation`
+
+**As** a test author,
+**When** I use `tests/lib/pipeline-harness.sh` to scaffold a scratch git repo, install a fake `claude` (mode `full`) and a fake `gh`, and call `ph_run REQ-01`,
+**Then** `run_pipeline` completes with exit code 0 and the fake `gh` log records a `pr create` invocation, proving the pipeline actually reached PR creation rather than stopping earlier.

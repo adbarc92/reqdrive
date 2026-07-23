@@ -2474,6 +2474,22 @@ EOF
 test_result "review: update_pr_with_review formats findings correctly" $?
 
 echo ""
+echo "--- Pipeline Harness ---"
+
+# Test: a scripted run reaches PR creation
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/ph-e2e"
+  ph_fake_claude full
+  ph_fake_gh
+  rc=$(ph_run REQ-01)
+  [ "$rc" = "0" ]
+  ph_gh_args | grep -q "pr create"
+)
+test_result "pipeline: scripted run reaches PR creation" $?
+
+echo ""
 echo "--- Harness Safety ---"
 
 # Test: suite refuses to run when mktemp fails
