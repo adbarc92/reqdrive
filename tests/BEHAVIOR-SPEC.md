@@ -1,4 +1,4 @@
-1# reqdrive Behavior Specification (Modules 1-4)
+# reqdrive Behavior Specification
 
 Behavioral contract for the core library modules, expressed as user stories.
 Each story maps to one or more tests in `tests/simple-test.sh`.
@@ -987,3 +987,170 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a CLI user,
 **When** I run `reqdrive orchestrate`,
 **Then** the output contains the case-insensitive phrase `coming soon`.
+
+---
+
+## Module 7: preflight.sh
+
+### US-PRE-01: check_git_repo fails outside a git repository
+**Test:** `preflight: check_git_repo fails outside repo`
+
+**As** a preflight checker,
+**When** I call `check_git_repo` from a directory with no `.git`,
+**Then** it returns non-zero.
+
+### US-PRE-02: check_clean_working_tree passes on a clean repo
+**Test:** `preflight: check_clean_working_tree passes on clean repo`
+
+**As** a preflight checker,
+**When** I call `check_clean_working_tree` in a repo with a committed file and no pending changes,
+**Then** it returns 0.
+
+### US-PRE-03: check_clean_working_tree fails on a dirty repo
+**Test:** `preflight: check_clean_working_tree fails on dirty repo`
+
+**As** a preflight checker,
+**When** I call `check_clean_working_tree` in a repo with an uncommitted modification,
+**Then** it returns non-zero.
+
+### US-PRE-04: check_base_branch_exists passes for a local branch
+**Test:** `preflight: check_base_branch_exists passes for local branch`
+
+**As** a preflight checker,
+**When** I call `check_base_branch_exists` with the name of the currently checked-out local branch,
+**Then** it returns 0.
+
+### US-PRE-05: check_requirements_dir passes when the dir has .md files
+**Test:** `preflight: check_requirements_dir passes with .md files`
+
+**As** a preflight checker,
+**When** I call `check_requirements_dir` on a directory that exists and contains at least one `.md` file,
+**Then** it returns 0.
+
+### US-PRE-06: check_requirement_exists finds a matching requirement file
+**Test:** `preflight: check_requirement_exists finds matching file`
+
+**As** a preflight checker,
+**When** I call `check_requirement_exists "REQ-01"` against a requirements directory containing `REQ-01-test-feature.md`,
+**Then** it returns 0.
+
+---
+
+## Module 8: pr-create.sh
+
+### US-PR-01: create_pr writes the PR URL to stdout
+**Test:** `pr: create_pr outputs URL to stdout`
+
+**As** a pipeline runner,
+**When** I call `create_pr` and the (mocked) `gh pr create` succeeds,
+**Then** `create_pr`'s stdout contains the PR URL (`https://github.com/test/repo/pull/42`).
+
+### US-PR-02: create_pr retries without labels when the labeled attempt fails
+**Test:** `pr: create_pr retries without labels on failure`
+
+**As** a pipeline runner,
+**When** `REQDRIVE_PR_LABELS` is set and the first `gh pr create` attempt (with labels) fails,
+**Then** `create_pr` retries `gh pr create` without labels, and its stdout contains the PR URL from the successful retry (`https://github.com/test/repo/pull/99`).
+
+### US-PR-03: create_pr returns non-zero when gh fails with no labels to drop
+**Test:** `pr: create_pr returns non-zero on gh failure without labels`
+
+**As** a pipeline runner,
+**When** `REQDRIVE_PR_LABELS` is empty and `gh pr create` fails,
+**Then** `create_pr` returns non-zero (there is no unlabeled retry left to attempt).
+
+### US-PR-04: PR body includes the verification section when a summary exists
+**Test:** `pr: body includes verification section from summary`
+
+**As** a pipeline runner,
+**When** `verification-summary.json` exists in the run directory and I call `create_pr`,
+**Then** the PR body passed to `gh pr create` contains a "Pipeline Verification" heading, along with `"2 / 3 completed"` (stories) and `"5 / 10 used"` (iterations) drawn from the summary.
+
+### US-PR-05: PR body omits the verification section when no summary exists
+**Test:** `pr: body omits verification section when no summary file`
+
+**As** a pipeline runner,
+**When** no `verification-summary.json` exists in the run directory and I call `create_pr`,
+**Then** the PR body passed to `gh pr create` does not contain "Pipeline Verification".
+
+---
+
+## Module 9: init.sh
+
+### US-INIT-01: init creates reqdrive.json with version 0.3.0
+**Test:** `init: creates reqdrive.json with version 0.3.0`
+
+**As** a CLI user,
+**When** I run the init wizard accepting the default answer at every prompt,
+**Then** `reqdrive.json` is created and its `.version` field is `0.3.0`.
+
+### US-INIT-02: init creates the .reqdrive/runs directory
+**Test:** `init: creates .reqdrive/runs/ directory`
+
+**As** a CLI user,
+**When** I run the init wizard accepting the default answer at every prompt,
+**Then** a `.reqdrive/runs` directory is created.
+
+---
+
+## Module 10: review phase
+
+### US-REV-01: load_config defaults reviewCommand to empty string
+**Test:** `review: config defaults reviewCommand to empty string`
+
+**As** a pipeline runner,
+**When** I call `reqdrive_load_config` on a manifest with no `reviewCommand` field,
+**Then** `REQDRIVE_REVIEW_COMMAND` is set to `""`.
+
+### US-REV-02: load_config reads reviewCommand from the manifest
+**Test:** `review: config reads reviewCommand from JSON`
+
+**As** a pipeline runner,
+**When** the manifest has `"reviewCommand": "builtin"` and I call `reqdrive_load_config`,
+**Then** `REQDRIVE_REVIEW_COMMAND` is set to `"builtin"`.
+
+### US-REV-03: Config schema accepts a string reviewCommand
+**Test:** `review: schema accepts string reviewCommand`
+
+**As** a validator,
+**When** I call `validate_config_schema` on a file where `reviewCommand` is a string,
+**Then** it returns 0.
+
+### US-REV-04: Config schema rejects a non-string reviewCommand
+**Test:** `review: schema rejects non-string reviewCommand`
+
+**As** a validator,
+**When** I call `validate_config_schema` on a file where `reviewCommand` is a number,
+**Then** it returns 1 and prints "reviewCommand must be a string".
+
+### US-REV-05: update_pr_with_review formats findings into the PR body
+**Test:** `review: update_pr_with_review formats findings correctly`
+
+**As** a pipeline runner,
+**When** I call `update_pr_with_review` against a `review-findings.json` containing findings with `severity`, `file`, and `message` fields,
+**Then** the updated PR body (passed to `gh pr edit --body`) contains a "Code Review Findings" heading and includes each finding's message (e.g. "Missing null check") and severity (e.g. "warning").
+
+---
+
+## Module 11: validate + harness
+
+### US-VAL-01: validate reports PASSED for a valid manifest
+**Test:** `validate: passes for valid manifest`
+
+**As** a CLI user,
+**When** I source `validate.sh` against a loaded config with a valid `reqdrive.json` and an existing `requirementsDir`,
+**Then** the output contains "Validation PASSED".
+
+### US-VAL-02: validate exits non-zero for invalid JSON
+**Test:** `validate: fails for invalid JSON`
+
+**As** a CLI user,
+**When** `reqdrive.json` contains invalid JSON and I source `validate.sh`,
+**Then** it exits with a non-zero status.
+
+### US-HARN-01: Suite refuses to run when mktemp fails
+**Test:** `harness: aborts when mktemp fails`
+
+**As** a test runner,
+**When** `mktemp -d` fails and the suite is invoked,
+**Then** it prints `FATAL: mktemp failed` and exits non-zero before any assertion runs, so no assertion can operate on an empty `TEST_TEMP`.
