@@ -12,7 +12,7 @@ so it cannot detect a silent defect.
 
 | # | Location | Finding | Status |
 |---|---|---|---|
-| F1 | `tests/simple-test.sh` implementation-prompt assertions | Two were pure negatives satisfied by an empty prompt file. | **Partially fixed** (Task 4) — positive content checks added; silent mutant now caught by 3 of 3. |
+| F1 | `tests/simple-test.sh` implementation-prompt assertions | Two were pure negatives satisfied by an empty prompt file. | **Fixed** — Task 4 added positive content checks (silent mutant now caught by 3 of 3), but this made the two `! grep` negations non-terminal in their subshells; under `set -e`, bash exempts `!`-prefixed commands from errexit, so a violated negative was silently masked and reported PASS. Follow-up commit converts both to `if grep …; then exit 1; fi` guards, which participate in errexit regardless of position. Verified via `tests/mutate.sh` (`impl-prompt-silent`, `impl-prompt-return1`) and a scratch-copy masking proof. |
 | F2 | `tests/simple-test.sh` `${VAR}` assertion | Interpolates `$HOME` into an unanchored grep BRE, so its regex-safety depends on the machine's home path. | Open |
 | F3 | `lib/run.sh:285-288` | `build_implementation_prompt` writes a prompt with blank Title/Description/Criteria when `jq` fails on malformed story JSON. No guard, no assertion. | Open |
 | F4 | Suite-wide | ~21 assertions end in a pure negative and cannot detect setup failure. Exact count to be reproduced during P1. | Open |
