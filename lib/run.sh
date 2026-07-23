@@ -949,12 +949,14 @@ EOF
 
     if [ ! -f "$prd_file" ]; then
       log_error "Agent failed to create PRD after $plan_max attempts"
-      log_warn "Proceeding without a PRD — the draft-PR gate will require review"
-    else
-      # Final validation (warn only, don't block)
-      if ! validate_prd_schema "$prd_file" 2>/dev/null; then
-        log_warn "PRD has schema issues but proceeding with implementation"
-      fi
+      write_run_status "$agent_dir" "failed" "$req_id" "0" "$EXIT_AGENT_ERROR"
+      run_completion_hook "$req_id" "failed" "" "$branch" "$EXIT_AGENT_ERROR"
+      exit "$EXIT_AGENT_ERROR"
+    fi
+
+    # Final validation (warn only, don't block)
+    if ! validate_prd_schema "$prd_file" 2>/dev/null; then
+      log_warn "PRD has schema issues but proceeding with implementation"
     fi
   else
     log_info "PRD exists, skipping planning phase"

@@ -2505,17 +2505,21 @@ echo "--- Draft Gate ---"
 )
 test_result "draft gate: no testCommand forces draft" $?
 
-# Test: fail-open B — no prd.json means no plan, so draft
+# Test: planning failure — no prd.json after exhausting retries hard-aborts, no PR
 (
   set -e
   source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
   ph_setup "$TEST_TEMP/dg-b"
   ph_fake_claude noprd
   ph_fake_gh
-  ph_run REQ-01 > /dev/null
-  ph_gh_args | grep "pr create" | grep -q -- "--draft"
+  rc=$(ph_run REQ-01)
+  [ "$rc" = "5" ]
+  if ph_gh_args | grep -q "pr create"; then
+    echo "unexpected PR" >&2
+    exit 1
+  fi
 )
-test_result "draft gate: missing prd.json forces draft" $?
+test_result "draft gate: planning failure aborts with no PR" $?
 
 # Test: fail-open C — stories omitting 'passes' are not complete, so draft
 (

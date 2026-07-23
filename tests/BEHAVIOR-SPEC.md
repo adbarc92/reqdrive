@@ -1175,12 +1175,12 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** a run completes with `testCommand` unset (so `verification_passed` is `null`, not the literal string `"false"`),
 **Then** the gate does not treat `null` as passing evidence — `gh pr create` is invoked with `--draft`.
 
-### US-DRAFT-02: A missing prd.json means no plan, so the PR is a draft
-**Test:** `draft gate: missing prd.json forces draft`
+### US-DRAFT-02: A missing prd.json means planning failed, so the pipeline aborts with no PR
+**Test:** `draft gate: planning failure aborts with no PR`
 
-**As** a maintainer relying on the draft-PR gate as a safety net,
-**When** the agent never produces `prd.json` (planning exhausts its retries with no PRD on disk), the pipeline no longer hard-aborts with no PR at all — it proceeds to Phase 3 with `prd_present=0` so the failure is surfaced for human review instead of silently vanishing,
-**Then** `gh pr create` is invoked with `--draft`.
+**As** a maintainer relying on the pipeline's fail-safes,
+**When** the agent never produces `prd.json` (planning exhausts its retries with no PRD on disk),
+**Then** the pipeline hard-aborts with `EXIT_AGENT_ERROR` (5), the run is marked `failed`, and `gh pr create` is never invoked — no empty draft PR is opened for a run that never planned.
 
 ### US-DRAFT-03: Stories omitting 'passes' are not complete, so the PR is a draft
 **Test:** `draft gate: stories omitting passes force draft`

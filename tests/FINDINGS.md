@@ -17,6 +17,7 @@ so it cannot detect a silent defect.
 | F3 | `lib/run.sh:285-288` | `build_implementation_prompt` writes a prompt with blank Title/Description/Criteria when `jq` fails on malformed story JSON. No guard, no assertion. | Open |
 | F4 | Suite-wide | **18 assertions** end in a pure negative (`!` or `[ -z ]`) and cannot detect a setup failure. Measured 2026-07-23 with `awk '/^ *\($/{buf="";inb=1;next} /^ *\)$/{if(inb)print buf;inb=0;next} inb{buf=$0}' tests/simple-test.sh \| grep -cE '^\s*(!\|\[ -z )'`. (Down from a higher count after Task 4 converted two impl-prompt negations to `if grep; then exit 1; fi`.) | Open — triage at Task 35 |
 | F5 | `tests/simple-test.sh:346-356` | The `reqdrive validate` assertion checks only `-ne 0`, so it does not pin the exit code. | Closed by Task 31 |
+| F6 | `lib/run.sh` draft-PR gate, `prd_present==0` branch | With Phase 1's planning-failure abort restored, `prd_present=0` is reachable only if `prd.json` is deleted *during* implementation (after planning already succeeded) — e.g. a misbehaving agent removing it mid-run. Not currently exercised by a dedicated test; the retargeted `draft gate: planning failure aborts with no PR` test covers the pre-planning-success abort path instead. | Open — candidate for a focused test |
 
 ## Closed
 
