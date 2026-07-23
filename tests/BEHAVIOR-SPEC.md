@@ -256,6 +256,20 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** a story has `passes` as a string instead of a boolean,
 **Then** `validate_prd_schema` returns 1 with a specific type error.
 
+### US-SCH-33: PRD schema — rejects non-number priority
+**Test:** `schema: validate_prd_schema rejects non-number priority`
+
+**As** a validator,
+**When** a story has `priority` as the string `"high"` instead of a number,
+**Then** `validate_prd_schema` returns 1 and prints "priority must be a number".
+
+### US-SCH-34: PRD schema — priority is optional
+**Test:** `schema: validate_prd_schema passes when priority is missing`
+
+**As** a validator,
+**When** a story has no `priority` field at all,
+**Then** `validate_prd_schema` returns 0 (priority is optional).
+
 ### US-SCH-20: Checkpoint schema — valid checkpoint passes
 **Test:** `schema: validate_checkpoint_schema passes for valid checkpoint`
 
@@ -586,6 +600,41 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** the manifest has `"prLabels": ["a", "b", "c"]`,
 **Then** `REQDRIVE_PR_LABELS` is set to `"a,b,c"`.
 
+### US-CFG-14: load_config — defaults prLabels when omitted
+**Test:** `load_config: defaults prLabels to agent-generated`
+
+**As** a pipeline runner,
+**When** I call `reqdrive_load_config` on a manifest with no `prLabels` field,
+**Then** `REQDRIVE_PR_LABELS` is set to `"agent-generated"`.
+
+### US-CFG-15: load_config — defaults testCommand when omitted
+**Test:** `load_config: defaults testCommand to empty string`
+
+**As** a pipeline runner,
+**When** I call `reqdrive_load_config` on a manifest with no `testCommand` field,
+**Then** `REQDRIVE_TEST_COMMAND` is set to `""`.
+
+### US-CFG-16: load_config — defaults maxStoryRetries to 3
+**Test:** `load_config: defaults maxStoryRetries to 3`
+
+**As** a pipeline runner,
+**When** I call `reqdrive_load_config` on a manifest with no `maxStoryRetries` field,
+**Then** `REQDRIVE_MAX_STORY_RETRIES` is set to `"3"`.
+
+### US-CFG-17: load_config — loads custom maxStoryRetries
+**Test:** `load_config: loads custom maxStoryRetries`
+
+**As** a pipeline runner,
+**When** the manifest has `"maxStoryRetries": 5`,
+**Then** `REQDRIVE_MAX_STORY_RETRIES` is set to `"5"`.
+
+### US-CFG-18: load_config — defaults projectName when omitted
+**Test:** `load_config: defaults projectName to empty string`
+
+**As** a pipeline runner,
+**When** I call `reqdrive_load_config` on a manifest with no `projectName` field,
+**Then** `REQDRIVE_PROJECT_NAME` is set to `""`.
+
 ### US-CFG-08: load_config — exits on missing manifest
 **Test:** `load_config: exits with error when no manifest`
 
@@ -614,9 +663,230 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** I call `reqdrive_get_req_file "REQ-99"` and no matching file exists,
 **Then** it returns 1.
 
+### US-CFG-19: get_req_file — returns full path to matched file
+**Test:** `get_req_file: returns full path to matched file`
+
+**As** a pipeline runner,
+**When** I call `reqdrive_get_req_file "REQ-02"` and `docs/requirements/REQ-02-another-feature.md` exists,
+**Then** the returned path ends with `REQ-02-another-feature.md`.
+
 ### US-CFG-12: get_req_file — respects custom requirementsDir
 **Test:** `get_req_file: respects custom requirementsDir`
 
 **As** a pipeline runner,
 **When** the manifest sets `"requirementsDir": "specs"` and `specs/REQ-05-custom.md` exists,
 **Then** `reqdrive_get_req_file "REQ-05"` finds it.
+
+---
+
+## Module 5: run.sh
+
+### US-RUN-01: write_run_status — creates valid run.json with all fields
+**Test:** `run_status: creates valid run.json with all fields`
+
+**As** a pipeline runner,
+**When** I call `write_run_status` with a run directory, status `"running"`, and req ID `"REQ-01"`,
+**Then** `run.json` exists and its `.status` is `"running"`, `.req_id` is `"REQ-01"`, `.pid` contains digits, and `.started_at` is non-empty.
+
+### US-RUN-02: write_run_status — preserves started_at across calls
+**Test:** `run_status: preserves started_at on subsequent calls`
+
+**As** a status reporter,
+**When** `write_run_status` is called a second time on the same run directory (with status `"completed"`, iteration 5, exit code 0),
+**Then** `.started_at` in `run.json` is unchanged from the first call's value.
+
+### US-RUN-03: write_run_status — records the writing process's PID
+**Test:** `run_status: records current PID`
+
+**As** a status reporter,
+**When** `write_run_status` writes `run.json`,
+**Then** the `.pid` field equals `$$`, the PID of the process that wrote it.
+
+### US-RUN-04: write_run_status — includes summary when accumulators are set
+**Test:** `run_status: includes summary when RUN_SUMMARY_* vars set`
+
+**As** a pipeline runner,
+**When** the `RUN_SUMMARY_*` variables (iterations, tests passed/failed, commits verified/missing, stories completed/failed/total, verification passed) are set before calling `write_run_status`,
+**Then** `run.json`'s `.summary.iterations_run`, `.summary.tests_passed`, `.summary.tests_failed`, `.summary.commits_verified`, `.summary.commits_missing`, `.summary.stories_completed`, `.summary.stories_total`, and `.summary.verification_passed` each equal the corresponding `RUN_SUMMARY_*` value.
+
+### US-RUN-05: write_run_status — summary is null when accumulators are unset
+**Test:** `run_status: summary is null when accumulators not set`
+
+**As** a pipeline runner,
+**When** `RUN_SUMMARY_ITERATIONS` (and the other accumulators) are unset before calling `write_run_status`,
+**Then** `.summary` in `run.json` is the JSON literal `null`.
+
+### US-RUN-06: write_run_status — summary output is valid JSON
+**Test:** `run_status: run.json with summary is valid JSON`
+
+**As** a pipeline runner,
+**When** `write_run_status` writes `run.json` with the `RUN_SUMMARY_*` accumulators populated,
+**Then** `jq empty run.json` succeeds — the file parses as valid JSON.
+
+### US-RUN-07: save_checkpoint — creates valid checkpoint.json
+**Test:** `checkpoint: save_checkpoint creates valid checkpoint.json`
+
+**As** a pipeline runner,
+**When** I call `save_checkpoint` with req ID `"REQ-01"`, branch `"reqdrive/req-01"`, and iteration `3`,
+**Then** `checkpoint.json` exists with `.req_id` containing `"REQ-01"`, `.branch` containing `"reqdrive/req-01"`, and `.iteration` equal to `"3"`.
+
+### US-RUN-08: save_checkpoint — records completed story IDs from the PRD
+**Test:** `checkpoint: records completed story IDs from PRD`
+
+**As** a pipeline runner,
+**When** `save_checkpoint` runs against a PRD where only `US-001` has `"passes": true`,
+**Then** `checkpoint.json`'s `.stories_complete[0]` is `"US-001"` and `.stories_complete` has length `1`.
+
+### US-RUN-09: load_checkpoint — returns the path for a matching req_id
+**Test:** `checkpoint: load returns path for matching req_id`
+
+**As** a pipeline runner,
+**When** I call `load_checkpoint` on a directory whose `checkpoint.json` has `"req_id": "REQ-01"`, passing `"REQ-01"`,
+**Then** the result is non-empty and ends in `checkpoint.json`.
+
+### US-RUN-10: load_checkpoint — returns empty for a mismatched req_id
+**Test:** `checkpoint: load returns empty for mismatched req_id`
+
+**As** a pipeline runner,
+**When** I call `load_checkpoint` on a directory whose `checkpoint.json` has `"req_id": "REQ-01"`, passing `"REQ-99"`,
+**Then** the result is empty.
+
+### US-RUN-11: load_checkpoint — returns empty when the file is missing
+**Test:** `checkpoint: load returns empty for missing file`
+
+**As** a pipeline runner,
+**When** I call `load_checkpoint` on a directory with no `checkpoint.json`,
+**Then** the result is empty.
+
+### US-RUN-12: save_checkpoint — includes last_commit_sha
+**Test:** `checkpoint: save_checkpoint includes last_commit_sha`
+
+**As** a pipeline runner,
+**When** `save_checkpoint` runs inside a git repository with at least one commit,
+**Then** `checkpoint.json`'s `.last_commit_sha` is non-empty and not the literal string `"null"`.
+
+### US-RUN-13: select_next_story — returns the lowest-priority incomplete story
+**Test:** `story: select_next_story returns lowest-priority incomplete`
+
+**As** the pipeline orchestrator,
+**When** the PRD has `US-001` (priority 1, `passes: true`), `US-002` (priority 2, `passes: false`), and `US-003` (priority 3, `passes: false`),
+**Then** `select_next_story` returns `"US-002"` — the lowest-priority-number story that has not yet passed.
+
+### US-RUN-14: select_next_story — returns empty when every story passes
+**Test:** `story: select_next_story returns empty when all pass`
+
+**As** the pipeline orchestrator,
+**When** every story in the PRD has `"passes": true`,
+**Then** `select_next_story` returns an empty string.
+
+### US-RUN-15: select_next_story — returns empty for a missing PRD file
+**Test:** `story: select_next_story returns empty for missing PRD`
+
+**As** the pipeline orchestrator,
+**When** `select_next_story` is called with a path to a PRD file that does not exist,
+**Then** it returns an empty string (no error).
+
+### US-RUN-16: get_story_details — returns the correct story by ID
+**Test:** `story: get_story_details returns correct story by ID`
+
+**As** the pipeline orchestrator,
+**When** I call `get_story_details` with `"US-002"` against a PRD containing `US-001` ("First Story") and `US-002` ("Second Story"),
+**Then** the returned JSON's `.title` is `"Second Story"`.
+
+### US-RUN-17: select_next_story — skips stories with attempts at or above the max
+**Test:** `story: select_next_story skips stories with attempts >= max`
+
+**As** the pipeline orchestrator,
+**When** the PRD has `US-001` (priority 1, `attempts: 3`) and `US-002` (priority 2, `attempts: 1`), and `select_next_story` is called with max `3`,
+**Then** it returns `"US-002"`, skipping `US-001` whose `attempts` (3) is not less than the max (3).
+
+### US-RUN-18: select_next_story — returns a story with attempts below the max
+**Test:** `story: select_next_story returns story with attempts < max`
+
+**As** the pipeline orchestrator,
+**When** the PRD has `US-001` (priority 1, `attempts: 2`) and `US-002` (priority 2, no `attempts` field), and `select_next_story` is called with max `3`,
+**Then** it returns `"US-001"` — its attempts (2) are below the max, and it has the lower priority number.
+
+### US-RUN-19: select_next_story — returns empty when all stories are exhausted or complete
+**Test:** `story: select_next_story returns empty when all exhausted`
+
+**As** the pipeline orchestrator,
+**When** the PRD has `US-001` (`passes: false`, `attempts: 3`) and `US-002` (`passes: true`), and `select_next_story` is called with max `3`,
+**Then** it returns an empty string — the incomplete story has exhausted its retries and the other has already passed.
+
+### US-RUN-20: build_planning_prompt — includes the requirement content
+**Test:** `prompt: build_planning_prompt includes requirement content`
+
+**As** a pipeline runner,
+**When** I call `build_planning_prompt` with requirement text `"This is the requirement content."`,
+**Then** the generated prompt file contains that text verbatim.
+
+### US-RUN-21: build_planning_prompt — includes the PRD schema
+**Test:** `prompt: build_planning_prompt includes PRD schema`
+
+**As** a pipeline runner,
+**When** I call `build_planning_prompt`,
+**Then** the generated prompt file contains both the literal string `"PRD Schema"` and `"userStories"`.
+
+### US-RUN-22: build_planning_prompt — preserves dollar signs in content
+**Test:** `prompt: build_planning_prompt preserves dollar signs in content`
+
+**As** a pipeline runner,
+**When** I call `build_planning_prompt` with requirement text `"Check $HOME variable"`,
+**Then** the generated prompt file contains the literal text `$HOME` — the planning prompt's quoted heredoc does not expand it.
+
+### US-RUN-23: run_completion_hook — executes the configured command with env vars
+**Test:** `hook: executes command with env vars`
+
+**As** a pipeline runner,
+**When** `REQDRIVE_COMPLETION_HOOK` is set to a command that echoes `$REQ_ID $STATUS $PR_URL $BRANCH $EXIT_CODE`, and I call `run_completion_hook "REQ-01" "completed" "https://pr.url" "reqdrive/req-01" "0"`,
+**Then** the hook's output contains `"REQ-01"`, `"completed"`, and `"https://pr.url"` — the function exports these as env vars for the hook command.
+
+### US-RUN-24: run_completion_hook — no-op when the hook is unset
+**Test:** `hook: no-op when hook is empty`
+
+**As** a pipeline runner,
+**When** `REQDRIVE_COMPLETION_HOOK` is `""` and I call `run_completion_hook`,
+**Then** it returns success without running any command.
+
+### US-RUN-25: run_completion_hook — a failing hook does not propagate
+**Test:** `hook: handles failing hook gracefully`
+
+**As** a pipeline runner,
+**When** `REQDRIVE_COMPLETION_HOOK` is set to `"exit 42"` and I call `run_completion_hook`,
+**Then** `run_completion_hook` itself still returns success — the hook's non-zero exit does not abort the caller.
+
+### US-RUN-26: extract_iteration_summary — extracts a valid summary block
+**Test:** `summary: extract_iteration_summary extracts valid block`
+
+**As** a pipeline runner,
+**When** the agent output contains a fenced ` ```json:iteration-summary ` block with `"storyId": "US-003"`,
+**Then** `iteration-1.summary.json` is created and its `.storyId` is `"US-003"`.
+
+### US-RUN-27: extract_iteration_summary — handles output with no summary block
+**Test:** `summary: handles missing summary gracefully`
+
+**As** a pipeline runner,
+**When** the agent output contains no ` ```json:iteration-summary ` block,
+**Then** `extract_iteration_summary` does not create `iteration-1.summary.json`.
+
+### US-RUN-28: build_implementation_prompt — neutralizes $(cmd) in the story title
+**Test:** `impl prompt: neutralizes $(cmd) in story title`
+
+**As** a pipeline runner,
+**When** a story's `title` is `$(echo pwned)` and I call `build_implementation_prompt`,
+**Then** the prompt file contains the literal (unexpanded) text `$(echo pwned)` and the word `pwned` never appears alone on its own line — the command substitution was never executed.
+
+### US-RUN-29: build_implementation_prompt — neutralizes backticks in the story description
+**Test:** `impl prompt: neutralizes backticks in story description`
+
+**As** a pipeline runner,
+**When** a story's `description` is `` Use `whoami` to attack `` and I call `build_implementation_prompt`,
+**Then** the prompt file contains no raw `` `whoami` `` backtick sequence, but does contain the sanitized text `Use 'whoami' to attack` and the title line `**Title:** Safe title`.
+
+### US-RUN-30: build_implementation_prompt — neutralizes ${VAR} in acceptance criteria
+**Test:** `impl prompt: neutralizes ${VAR} in acceptance criteria`
+
+**As** a pipeline runner,
+**When** a story's `acceptanceCriteria` includes `"Check ${HOME} variable"` and I call `build_implementation_prompt`,
+**Then** the prompt file does not contain the actual expanded `$HOME` path, but does contain the literal escaped text `Check \${HOME} variable` and `US-003`.
