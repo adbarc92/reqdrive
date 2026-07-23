@@ -39,8 +39,11 @@ EOF
 
   # run_pipeline's create_pr pushes to "origin" unconditionally; give it a
   # real (bare, local) remote so the push — and therefore the gh pr create
-  # call the test asserts on — is actually reached.
-  local remote_dir="$PH_ROOT/../ph-origin.git"
+  # call the test asserts on — is actually reached. The remote path is
+  # namespaced by the full PH_ROOT (not a shared sibling), so multiple
+  # ph_setup calls in one suite run each get their own remote and the
+  # hard-coded REQ-01 branch never collides across cases.
+  local remote_dir="${PH_ROOT}-origin.git"
   git init -q --bare "$remote_dir"
   git -C "$PH_ROOT" remote add origin "$remote_dir"
 
