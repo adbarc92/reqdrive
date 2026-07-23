@@ -68,6 +68,12 @@ jobs:
       - name: Run E2E tests
         run: bats --formatter tap tests/e2e/
 
+      - name: Fail on any e2e skip
+        run: |
+          skips=$(bats --formatter tap tests/e2e | grep -c '# skip' || true)
+          echo "e2e skips: $skips"
+          [ "$skips" -eq 0 ]
+
   oracle-gate:
     name: Freeze gate
     runs-on: ubuntu-latest
