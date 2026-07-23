@@ -18,7 +18,9 @@
 - `set -euo pipefail` in entry points (`bin/reqdrive`), `set -e` in libraries (`lib/*.sh`). Exception: `tests/simple-test.sh` becomes `set +e` at top with `set -e` inside each assertion body — this is Task 2 and is deliberate.
 - **Run `bash -n` on every modified `.sh` file before committing.** CI enforces it.
 - **shellcheck must stay clean.** CI lints `bin/reqdrive`, `lib/*.sh`, `install.sh`, `tests/simple-test.sh`, `tests/run-tests.sh`. Any new script added to those paths must be added to the lint list in the same commit.
-- **All tests must pass** before any commit: `bash tests/simple-test.sh` exits 0.
+  - **shellcheck is not installed natively on this machine.** Run it as `./scripts/shellcheck FILE...` — a Docker wrapper around `koalaman/shellcheck:stable`, verified working. Wherever a task step says `shellcheck X`, run `./scripts/shellcheck X`. It is a real lint run, not a stub: it exits 1 on findings.
+  - **Known incoming finding:** Task 34's `policy_classify_paths $changed` relies on word-splitting and will trip **SC2086**. Resolve it by iterating with `while IFS= read -r path` over `git diff --name-only` output rather than by adding a blanket disable — filenames with spaces are a real case and the loop handles both concerns at once.
+- **All tests must pass before any commit:** `bash tests/simple-test.sh` exits 0. **Red-first tasks squash red into green** — write the failing test, *run it and record the failure output in your report*, then implement, then commit test and implementation together. The red evidence lives in the task report, not in a red commit. This overrides any task step that says to commit failing tests on their own (notably Task 17 Step 3, which is superseded: fold it into Task 18's commit).
 - **From Task 14 onward**, `bash tests/oracle-gate.sh` must also exit 0 before any commit.
 - **From Task 16 onward**, `bats tests/unit tests/e2e` must pass with **zero skips in `tests/e2e/`**.
 - **No `Co-Authored-By` lines and no "Generated with Claude Code" footers** in commit messages (user's standing convention).

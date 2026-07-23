@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# shellcheck wrapper — runs koalaman/shellcheck in Docker so contributors do
+# not need a native install. CI uses the apt package directly; this exists so
+# the same lint command works locally.
+#
+# Usage: scripts/shellcheck FILE...
+set -euo pipefail
+
+if command -v shellcheck.exe >/dev/null 2>&1; then
+  exec shellcheck.exe "$@"
+fi
+
+command -v docker >/dev/null 2>&1 || {
+  echo "shellcheck wrapper: neither a native shellcheck nor docker is available" >&2
+  exit 127
+}
+
+# MSYS_NO_PATHCONV stops Git-Bash rewriting the container-side /mnt path.
+MSYS_NO_PATHCONV=1 exec docker run --rm \
+  -v "$(pwd)":/mnt -w /mnt \
+  koalaman/shellcheck:stable "$@"
