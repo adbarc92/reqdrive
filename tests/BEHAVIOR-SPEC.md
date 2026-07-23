@@ -890,3 +890,100 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a pipeline runner,
 **When** a story's `acceptanceCriteria` includes `"Check ${HOME} variable"` and I call `build_implementation_prompt`,
 **Then** the prompt file does not contain the actual expanded `$HOME` path, but does contain the literal escaped text `Check \${HOME} variable` and `US-003`.
+
+---
+
+## Module 6: bin/reqdrive (CLI)
+
+### US-CLI-01: --version prints the schema version
+**Test:** `cli: --version shows 0.3.0`
+
+**As** a CLI user,
+**When** I run `reqdrive --version`,
+**Then** the output contains the string `0.3.0`.
+
+### US-CLI-02: --help prints command usage
+**Test:** `cli: --help shows usage`
+
+**As** a CLI user,
+**When** I run `reqdrive --help`,
+**Then** the output contains `Usage:` and mentions the `init`, `run`, and `validate` commands.
+
+### US-CLI-03: --help lists the security-related flags
+**Test:** `cli: --help shows security flags`
+
+**As** a CLI user,
+**When** I run `reqdrive --help`,
+**Then** the output contains the flags `--interactive`, `--unsafe`, `--force`, and `--resume`.
+
+### US-CLI-04: Unknown command prints an error message
+**Test:** `cli: unknown command shows error`
+
+**As** a CLI user,
+**When** I run `reqdrive unknown-cmd`,
+**Then** the output contains the message `Unknown command`.
+
+### US-CLI-05: validate reports a passing manifest
+**Test:** `cli: validate command works`
+
+**As** a CLI user,
+**When** I run `reqdrive validate` against a project with a valid `reqdrive.json` and an existing `requirementsDir`,
+**Then** the output contains `Validation PASSED`.
+
+### US-CLI-06: run requires a REQ-ID argument
+**Test:** `cli: run requires REQ-ID argument`
+**Environment:** requires the `claude` binary; skipped under the same test name when absent.
+
+**As** a CLI user,
+**When** I run `reqdrive run` with no REQ-ID argument,
+**Then** the output contains `Usage: reqdrive run`.
+
+### US-CLI-07: status with no runs reports none found
+**Test:** `cli: status with no runs shows 'No runs found'`
+
+**As** a CLI user,
+**When** I run `reqdrive status` in a project with a valid `reqdrive.json` and no `.reqdrive/runs/` entries,
+**Then** the output contains `No runs found`.
+
+### US-CLI-08: status with a run.json prints its status fields
+**Test:** `cli: status with run.json shows status fields`
+
+**As** a CLI user,
+**When** I run `reqdrive status` and `.reqdrive/runs/req-01/run.json` exists with `req_id: "REQ-01"` and `status: "completed"`,
+**Then** the output contains both `REQ-01` and `completed`.
+
+### US-CLI-09: logs with no log file reports an error
+**Test:** `cli: logs with missing log file shows error`
+
+**As** a CLI user,
+**When** I run `reqdrive logs REQ-01` and no `output.log` exists for that run,
+**Then** the output contains `No log file found`.
+
+### US-CLI-10: migrate adds a version field to a versionless config
+**Test:** `cli: migrate adds version to versionless config`
+
+**As** a CLI user,
+**When** I run `reqdrive migrate` against a `reqdrive.json` with no `version` field,
+**Then** the output contains `Updated: reqdrive.json` and the config's `.version` field is set to `0.3.0`.
+
+### US-CLI-11: migrate skips a config that already has a version
+**Test:** `cli: migrate skips config that already has version`
+
+**As** a CLI user,
+**When** I run `reqdrive migrate` against a `reqdrive.json` that already has `"version":"0.3.0"`,
+**Then** the output contains `Skipped: reqdrive.json`.
+
+### US-CLI-12: plan requires a REQ-ID argument
+**Test:** `cli: plan without args shows usage`
+**Environment:** requires the `claude` binary; skipped under the same test name when absent.
+
+**As** a CLI user,
+**When** I run `reqdrive plan` with no REQ-ID argument,
+**Then** the output contains `Usage: reqdrive plan`.
+
+### US-CLI-13: orchestrate reports it is not yet implemented
+**Test:** `cli: orchestrate shows 'coming soon'`
+
+**As** a CLI user,
+**When** I run `reqdrive orchestrate`,
+**Then** the output contains the case-insensitive phrase `coming soon`.
