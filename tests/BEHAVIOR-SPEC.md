@@ -1165,3 +1165,33 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a test author,
 **When** I use `tests/lib/pipeline-harness.sh` to scaffold a scratch git repo, install a fake `claude` (mode `full`) and a fake `gh`, and call `ph_run REQ-01`,
 **Then** `run_pipeline` completes with exit code 0 and the fake `gh` log records a `pr create` invocation, proving the pipeline actually reached PR creation rather than stopping earlier.
+
+## Module 13: draft gate
+
+### US-DRAFT-01: No testCommand means no evidence, so the PR is a draft
+**Test:** `draft gate: no testCommand forces draft`
+
+**As** a maintainer relying on the draft-PR gate as a safety net,
+**When** a run completes with `testCommand` unset (so `verification_passed` is `null`, not the literal string `"false"`),
+**Then** the gate does not treat `null` as passing evidence — `gh pr create` is invoked with `--draft`.
+
+### US-DRAFT-02: A missing prd.json means no plan, so the PR is a draft
+**Test:** `draft gate: missing prd.json forces draft`
+
+**As** a maintainer relying on the draft-PR gate as a safety net,
+**When** the agent never produces `prd.json` (planning exhausts its retries with no PRD on disk), the pipeline no longer hard-aborts with no PR at all — it proceeds to Phase 3 with `prd_present=0` so the failure is surfaced for human review instead of silently vanishing,
+**Then** `gh pr create` is invoked with `--draft`.
+
+### US-DRAFT-03: Stories omitting 'passes' are not complete, so the PR is a draft
+**Test:** `draft gate: stories omitting passes force draft`
+
+**As** a maintainer relying on the draft-PR gate as a safety net,
+**When** every story in `prd.json` omits the optional `passes` field,
+**Then** counting `select(.passes != true)` (not `select(.passes == false)`) correctly treats every such story as incomplete, and `gh pr create` is invoked with `--draft`.
+
+### US-DRAFT-04: Full evidence produces a non-draft PR
+**Test:** `draft gate: full evidence produces non-draft PR`
+
+**As** a maintainer relying on the draft-PR gate as a safety net,
+**When** `prd.json` exists, every story has `passes: true`, and `testCommand` runs and passes (`verification_passed` is the literal string `"true"`),
+**Then** `gh pr create` is invoked without `--draft` — proving the fix does not simply force every PR to draft unconditionally.

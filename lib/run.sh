@@ -949,14 +949,12 @@ EOF
 
     if [ ! -f "$prd_file" ]; then
       log_error "Agent failed to create PRD after $plan_max attempts"
-      write_run_status "$agent_dir" "failed" "$req_id" "0" "$EXIT_AGENT_ERROR"
-      run_completion_hook "$req_id" "failed" "" "$branch" "$EXIT_AGENT_ERROR"
-      exit "$EXIT_AGENT_ERROR"
-    fi
-
-    # Final validation (warn only, don't block)
-    if ! validate_prd_schema "$prd_file" 2>/dev/null; then
-      log_warn "PRD has schema issues but proceeding with implementation"
+      log_warn "Proceeding without a PRD — the draft-PR gate will require review"
+    else
+      # Final validation (warn only, don't block)
+      if ! validate_prd_schema "$prd_file" 2>/dev/null; then
+        log_warn "PRD has schema issues but proceeding with implementation"
+      fi
     fi
   else
     log_info "PRD exists, skipping planning phase"
@@ -1074,20 +1072,22 @@ EOF
   log_info "═══════════════════════════════════════════════════════"
 
   # Collect story stats from prd.json
-  local final_remaining="?"
+  local final_remaining=0
+  local prd_present=0
   local stories_total=0
   local stories_completed=0
   local stories_failed=0
 
   if [ -f "$prd_file" ]; then
+    prd_present=1
     stories_total=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo "0")
     stories_completed=$(jq '[.userStories[] | select(.passes == true)] | length' "$prd_file" 2>/dev/null || echo "0")
-    final_remaining=$(jq '[.userStories[] | select(.passes == false)] | length' "$prd_file" 2>/dev/null || echo "?")
+    final_remaining=$(jq '[.userStories[] | select(.passes != true)] | length' "$prd_file" 2>/dev/null || echo "0")
 
     # Stories that exhausted their retry limit
     local max_story_retries_check="${REQDRIVE_MAX_STORY_RETRIES:-3}"
     stories_failed=$(jq --argjson max "$max_story_retries_check" \
-      '[.userStories[] | select(.passes == false and ((.attempts // 0) >= $max))] | length' \
+      '[.userStories[] | select(.passes != true and ((.attempts // 0) >= $max))] | length' \
       "$prd_file" 2>/dev/null || echo "0")
   fi
 
@@ -1129,8 +1129,9 @@ EOF
     "total": $stories_total,
     "completed": $stories_completed,
     "failed": $stories_failed,
-    "remaining": $([ "$final_remaining" = "?" ] && echo "null" || echo "$final_remaining")
+    "remaining": $([ "$prd_present" -eq 1 ] && echo "$final_remaining" || echo "null")
   },
+  "prd_present": $([ "$prd_present" -eq 1 ] && echo "true" || echo "false"),
   "iterations": {
     "run": $RUN_SUMMARY_ITERATIONS,
     "max": $max_iterations
@@ -1150,12 +1151,6 @@ VEOF
 
   log_info "Verification summary written to verification-summary.json"
 
-  # Decide PR draft status based on verification results
-  if [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ]; then
-    log_warn "Agent did not complete all stories ($final_remaining remaining)"
-    log_warn "Creating draft PR for review"
-  fi
-
   # ── Create PR ──
   log_info ""
   log_info "═══════════════════════════════════════════════════════"
@@ -1164,12 +1159,20 @@ VEOF
 
   source "$REQDRIVE_ROOT/lib/pr-create.sh"
 
-  local draft_flag=""
-  if [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ]; then
-    draft_flag="--draft"
-  elif [ "$verification_passed" = "false" ]; then
-    log_warn "Final verification failed — creating draft PR"
-    draft_flag="--draft"
+  # Fail-closed: draft unless every piece of positive evidence is present.
+  local draft_flag="--draft"
+  if [ "$prd_present" -eq 1 ] && [ "$final_remaining" -eq 0 ] && [ "$verification_passed" = "true" ]; then
+    draft_flag=""
+  else
+    if [ "$prd_present" -ne 1 ]; then
+      log_warn "No prd.json — creating draft PR"
+    elif [ "$final_remaining" -ne 0 ]; then
+      log_warn "$final_remaining stories incomplete — creating draft PR"
+    elif [ "$verification_passed" = "null" ]; then
+      log_warn "No testCommand configured, so nothing verified the output — creating draft PR"
+    else
+      log_warn "Final verification failed — creating draft PR"
+    fi
   fi
 
   local pr_url=""

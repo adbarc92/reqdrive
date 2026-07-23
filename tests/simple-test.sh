@@ -2490,6 +2490,62 @@ echo "--- Pipeline Harness ---"
 test_result "pipeline: scripted run reaches PR creation" $?
 
 echo ""
+echo "--- Draft Gate ---"
+
+# Test: fail-open A — no testCommand means no evidence, so draft
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/dg-a"
+  ph_fake_claude full
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  ph_gh_args | grep -q "pr create"
+  ph_gh_args | grep "pr create" | grep -q -- "--draft"
+)
+test_result "draft gate: no testCommand forces draft" $?
+
+# Test: fail-open B — no prd.json means no plan, so draft
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/dg-b"
+  ph_fake_claude noprd
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  ph_gh_args | grep "pr create" | grep -q -- "--draft"
+)
+test_result "draft gate: missing prd.json forces draft" $?
+
+# Test: fail-open C — stories omitting 'passes' are not complete, so draft
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/dg-c"
+  ph_fake_claude nopasses
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  ph_gh_args | grep "pr create" | grep -q -- "--draft"
+)
+test_result "draft gate: stories omitting passes force draft" $?
+
+# Test: positive control — full evidence produces a non-draft PR
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/dg-ok"
+  jq '.testCommand = "true"' "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.tmp"
+  mv "$PH_ROOT/r.tmp" "$PH_ROOT/reqdrive.json"
+  git -C "$PH_ROOT" add -A && git -C "$PH_ROOT" commit -q -m "chore: enable testCommand"
+  ph_fake_claude full
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  ph_gh_args | grep -q "pr create"
+  ! ph_gh_args | grep "pr create" | grep -q -- "--draft"
+)
+test_result "draft gate: full evidence produces non-draft PR" $?
+
+echo ""
 echo "--- Harness Safety ---"
 
 # Test: suite refuses to run when mktemp fails
