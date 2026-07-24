@@ -377,6 +377,30 @@ test_result "validate: passes for valid manifest" $?
 )
 test_result "validate: fails for invalid JSON" $?
 
+# Test: validate exits with EXIT_CONFIG_ERROR on a malformed config
+(
+  set -e
+  cd "$TEST_TEMP"
+  mkdir -p vex && cd vex
+  echo 'not json at all' > reqdrive.json
+  rc=0
+  "$REQDRIVE_ROOT/bin/reqdrive" validate > /dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 3 ]
+)
+test_result "validate: exits 3 (EXIT_CONFIG_ERROR) on malformed config" $?
+
+# Test: validate exits 3 on a type violation
+(
+  set -e
+  cd "$TEST_TEMP"
+  mkdir -p vex2 && cd vex2
+  echo '{"maxIterations":"ten"}' > reqdrive.json
+  rc=0
+  "$REQDRIVE_ROOT/bin/reqdrive" validate > /dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 3 ]
+)
+test_result "validate: exits 3 on a config type violation" $?
+
 echo ""
 echo "--- Sanitize: sanitize_for_prompt ---"
 

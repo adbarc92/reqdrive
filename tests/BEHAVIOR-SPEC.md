@@ -1277,6 +1277,20 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** `reqdrive.json` contains invalid JSON and I source `validate.sh`,
 **Then** it exits with a non-zero status.
 
+### US-VAL-03: validate exits EXIT_CONFIG_ERROR on malformed config
+**Test:** `validate: exits 3 (EXIT_CONFIG_ERROR) on malformed config`
+
+**As** a CLI user,
+**When** I run `reqdrive validate` against a `reqdrive.json` that is not valid JSON at all,
+**Then** it exits with status 3 (`EXIT_CONFIG_ERROR`), not a bare 1.
+
+### US-VAL-04: validate exits EXIT_CONFIG_ERROR on a schema type violation
+**Test:** `validate: exits 3 on a config type violation`
+
+**As** a CLI user,
+**When** I run `reqdrive validate` against a `reqdrive.json` where a field has the wrong type (e.g. `maxIterations` is a string),
+**Then** it exits with status 3 (`EXIT_CONFIG_ERROR`), not a bare 1.
+
 ### US-HARN-01: Suite refuses to run when mktemp fails
 **Test:** `harness: aborts when mktemp fails`
 

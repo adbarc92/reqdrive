@@ -180,7 +180,7 @@ cmd_validate() {
   local manifest
   manifest=$(reqdrive_find_manifest) || {
     echo "ERROR: No reqdrive.json found. Run 'reqdrive init' to create one." >&2
-    exit 1
+    exit "$EXIT_CONFIG_ERROR"
   }
   export REQDRIVE_MANIFEST="$manifest"
   REQDRIVE_PROJECT_ROOT="$(dirname "$manifest")"

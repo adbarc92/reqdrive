@@ -4,7 +4,7 @@
   "environment": {
     "claude": true
   },
-  "suiteSha256": "2411501b05d4b230ccc254901fbe26535b0748e302ef6d645fb5e39f6da08bf7",
+  "suiteSha256": "69f6ea7cef294787fe633d101cc714532407d6b7b5a04db25c6b4ce9f2c0db7b",
   "gateSha256": "a1bcae04a802b2d54c2ff57956f33c2195b5187acc775947400b4da8d853f83b",
   "tests": [
     {
@@ -660,6 +660,14 @@
     {
       "name": "summary: handles missing summary gracefully",
       "story": "US-RUN-27"
+    },
+    {
+      "name": "validate: exits 3 (EXIT_CONFIG_ERROR) on malformed config",
+      "story": "US-VAL-03"
+    },
+    {
+      "name": "validate: exits 3 on a config type violation",
+      "story": "US-VAL-04"
     },
     {
       "name": "validate: fails for invalid JSON",
