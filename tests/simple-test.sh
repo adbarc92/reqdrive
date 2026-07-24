@@ -2613,6 +2613,27 @@ echo "--- Pipeline Harness ---"
 )
 test_result "pipeline: scripted run reaches PR creation" $?
 
+# Test: verification-summary.json is unchanged by the Phase 3 extraction
+# into lib/verification.sh (characterization test — the extraction did not
+# change the output).
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/vx"
+  ph_fake_claude full
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  s="$PH_ROOT/.reqdrive/runs/req-01/verification-summary.json"
+  jq -e '.version == "0.3.0"' "$s" > /dev/null
+  jq -e '.stories | has("total") and has("completed") and has("failed") and has("remaining")' "$s" > /dev/null
+  jq -e '.iterations | has("run") and has("max")' "$s" > /dev/null
+  jq -e '.iterations.max != null' "$s" > /dev/null
+  jq -e 'has("prd_present")' "$s" > /dev/null
+  jq -e '.tests | has("passed") and has("failed") and has("skipped")' "$s" > /dev/null
+  jq -e '.commits | has("verified") and has("missing")' "$s" > /dev/null
+)
+test_result "verification: summary keeps its full shape" $?
+
 echo ""
 echo "--- Draft Gate ---"
 

@@ -1113,25 +1113,16 @@ EOF
   log_info "  Phase 3: Verification"
   log_info "═══════════════════════════════════════════════════════"
 
+  source "$REQDRIVE_ROOT/lib/verification.sh"
+
   # Collect story stats from prd.json
-  local final_remaining=0
-  local prd_present=0
-  local stories_total=0
-  local stories_completed=0
-  local stories_failed=0
-
-  if [ -f "$prd_file" ]; then
-    prd_present=1
-    stories_total=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo "0")
-    stories_completed=$(jq '[.userStories[] | select(.passes == true)] | length' "$prd_file" 2>/dev/null || echo "0")
-    final_remaining=$(jq '[.userStories[] | select(.passes != true)] | length' "$prd_file" 2>/dev/null || echo "0")
-
-    # Stories that exhausted their retry limit
-    local max_story_retries_check="${REQDRIVE_MAX_STORY_RETRIES:-3}"
-    stories_failed=$(jq --argjson max "$max_story_retries_check" \
-      '[.userStories[] | select(.passes != true and ((.attempts // 0) >= $max))] | length' \
-      "$prd_file" 2>/dev/null || echo "0")
-  fi
+  local final_remaining prd_present stories_total stories_completed stories_failed
+  verify_collect "$prd_file" "${REQDRIVE_MAX_STORY_RETRIES:-3}"
+  stories_total=$VERIFY_STORIES_TOTAL
+  stories_completed=$VERIFY_STORIES_COMPLETED
+  stories_failed=$VERIFY_STORIES_FAILED
+  final_remaining=$VERIFY_STORIES_REMAINING
+  prd_present=$VERIFY_PRD_PRESENT
 
   RUN_SUMMARY_STORIES_TOTAL=$stories_total
   RUN_SUMMARY_STORIES_COMPLETED=$stories_completed
@@ -1142,54 +1133,20 @@ EOF
   log_info "Commits: $RUN_SUMMARY_COMMITS_VERIFIED verified, $RUN_SUMMARY_COMMITS_MISSING missing"
 
   # Run final verification test if testCommand is configured
-  local verification_passed=true
-  local verification_log="$agent_dir/verification.test.log"
-
-  if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
-    log_info "Running final verification: $REQDRIVE_TEST_COMMAND"
-    if eval "$REQDRIVE_TEST_COMMAND" > "$verification_log" 2>&1; then
-      log_info "Final verification PASSED"
-    else
-      log_warn "Final verification FAILED (see verification.test.log)"
-      verification_passed=false
-    fi
-  else
-    log_info "No testCommand configured, skipping final verification"
-    verification_passed=null
-  fi
+  # (captured via `|| rc=$?`, not a bare call + `case $?`, since a bare
+  # non-zero return would trip this file's `set -e` before the case ran)
+  local verification_passed verify_rc=0
+  verify_run_tests "$agent_dir" || verify_rc=$?
+  case $verify_rc in
+    0) verification_passed=true ;;
+    1) verification_passed=false ;;
+    2) verification_passed=null ;;
+  esac
 
   RUN_SUMMARY_VERIFICATION_PASSED=$verification_passed
 
   # Write verification summary for PR enrichment and pipeline consumption
-  local verification_file="$agent_dir/verification-summary.json"
-  cat > "$verification_file" <<VEOF
-{
-  "version": "0.3.0",
-  "req_id": "$req_id",
-  "timestamp": "$(date -Iseconds)",
-  "stories": {
-    "total": $stories_total,
-    "completed": $stories_completed,
-    "failed": $stories_failed,
-    "remaining": $([ "$prd_present" -eq 1 ] && echo "$final_remaining" || echo "null")
-  },
-  "prd_present": $([ "$prd_present" -eq 1 ] && echo "true" || echo "false"),
-  "iterations": {
-    "run": $RUN_SUMMARY_ITERATIONS,
-    "max": $max_iterations
-  },
-  "tests": {
-    "passed": $RUN_SUMMARY_TESTS_PASSED,
-    "failed": $RUN_SUMMARY_TESTS_FAILED,
-    "skipped": $RUN_SUMMARY_TESTS_SKIPPED
-  },
-  "commits": {
-    "verified": $RUN_SUMMARY_COMMITS_VERIFIED,
-    "missing": $RUN_SUMMARY_COMMITS_MISSING
-  },
-  "verification_passed": $verification_passed
-}
-VEOF
+  verify_write_summary "$agent_dir" "$req_id" "$max_iterations" full
 
   log_info "Verification summary written to verification-summary.json"
 

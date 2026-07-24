@@ -1239,6 +1239,13 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** I use `tests/lib/pipeline-harness.sh` to scaffold a scratch git repo, install a fake `claude` (mode `full`) and a fake `gh`, and call `ph_run REQ-01`,
 **Then** `run_pipeline` completes with exit code 0 and the fake `gh` log records a `pr create` invocation, proving the pipeline actually reached PR creation rather than stopping earlier.
 
+### US-PIPE-02: verification-summary.json keeps its full shape after the Phase 3 extraction
+**Test:** `verification: summary keeps its full shape`
+
+**As** a maintainer who extracted `run_pipeline`'s inline Phase 3 block into `lib/verification.sh` (`verify_collect`, `verify_run_tests`, `verify_write_summary`),
+**When** a scripted `ph_run REQ-01` completes,
+**Then** `verification-summary.json` still has `.version`, `.stories.{total,completed,failed,remaining}`, `.iterations.{run,max}` with `.iterations.max` not null, `.prd_present`, `.tests.{passed,failed,skipped}`, and `.commits.{verified,missing}` — proving the refactor is output-preserving, not just syntactically valid.
+
 ## Module 13: draft gate
 
 ### US-DRAFT-01: No testCommand means no evidence, so the PR is a draft
