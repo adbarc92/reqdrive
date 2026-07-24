@@ -3130,6 +3130,51 @@ EOF
 test_result "launch: re-launch is permitted after the previous run completed" $?
 
 echo ""
+echo "--- Policy Matcher ---"
+
+# Test: matcher classifies paths by tier (nested descendant, tier dir itself, no match)
+(
+  set -e
+  export REQDRIVE_POLICY_JSON='{"riskTiers":{"high":["src/auth"],"medium":["src/api"],"low":["docs"]}}'
+  source "$REQDRIVE_ROOT/lib/policy.sh"
+  [ "$(policy_tier_for_path 'src/auth/login.ts')" = "high" ]      # nested descendant
+  [ "$(policy_tier_for_path 'src/auth')" = "high" ]                # the tier directory itself
+  [ "$(policy_tier_for_path 'src/api/v1/users.ts')" = "medium" ]
+  [ "$(policy_tier_for_path 'docs/README.md')" = "low" ]
+  [ "$(policy_tier_for_path 'src/util/math.ts')" = "none" ]        # no match
+)
+test_result "policy: matcher classifies paths by tier" $?
+
+# Test: a sibling that merely shares the prefix must NOT match (directory-boundary check)
+(
+  set -e
+  export REQDRIVE_POLICY_JSON='{"riskTiers":{"high":["src/auth"]}}'
+  source "$REQDRIVE_ROOT/lib/policy.sh"
+  [ "$(policy_tier_for_path 'src/auth.sh')" = "none" ]
+  [ "$(policy_tier_for_path 'src/authorization/x.ts')" = "none" ]
+)
+test_result "policy: a prefix-sharing sibling does not match" $?
+
+# Test: highest tier wins when a path matches two
+(
+  set -e
+  # src/auth/keys is in both high and low; highest must win.
+  export REQDRIVE_POLICY_JSON='{"riskTiers":{"high":["src/auth"],"low":["src/auth/keys"]}}'
+  source "$REQDRIVE_ROOT/lib/policy.sh"
+  [ "$(policy_tier_for_path 'src/auth/keys/rsa.pem')" = "high" ]
+)
+test_result "policy: highest tier wins when a path matches two" $?
+
+# Test: no riskTiers means every path is untiered
+(
+  set -e
+  export REQDRIVE_POLICY_JSON='{}'
+  source "$REQDRIVE_ROOT/lib/policy.sh"
+  [ "$(policy_tier_for_path 'src/auth/login.ts')" = "none" ]
+)
+test_result "policy: no riskTiers means every path is untiered" $?
+
+echo ""
 echo "========================================"
 echo "  Results: $PASS passed, $FAIL failed, $SKIP skipped, $TOTAL total"
 echo "========================================"

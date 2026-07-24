@@ -1442,3 +1442,42 @@ safe defaults, so a malformed `policy` object is caught by `reqdrive validate`
 **As** a maintainer with no `policy` block in `reqdrive.json` yet,
 **When** `reqdrive_load_config` runs against a manifest with no `policy` key,
 **Then** `REQDRIVE_POLICY_SCOPE_CHECK` is exported as `"warn"` and `REQDRIVE_POLICY_JSON` is exported as `"{}"`, so downstream consumers (Tasks 33/34) never see an unset or malformed policy.
+
+## Module 17: policy matcher (lib/policy.sh)
+
+`lib/policy.sh` classifies a path against `REQDRIVE_POLICY_JSON.riskTiers`.
+Patterns are bare path prefixes, not globs: inside `[[ ]]` bash does not honour
+globstar, so `**` and `*` are indistinguishable and both cross `/`, while
+`src/auth/**` fails to match `src/auth` itself. A path matches a pattern when
+it equals the pattern or begins with `"<pattern>/"`. `policy_tier_for_path`
+probes `high`, `medium`, then `low` in that order so the highest tier wins;
+`policy_classify_paths` prints `TIER<TAB>PATH` per input path. This is the
+matcher Task 34's scope check consumes.
+
+### US-POL-05: Matcher classifies paths by tier
+**Test:** `policy: matcher classifies paths by tier`
+
+**As** the scope-check step classifying changed files by risk,
+**When** `REQDRIVE_POLICY_JSON.riskTiers` maps `high` to `src/auth`, `medium` to `src/api`, and `low` to `docs`,
+**Then** `policy_tier_for_path` returns `high` for a nested descendant (`src/auth/login.ts`) and for the tier directory itself (`src/auth`), `medium` for `src/api/v1/users.ts`, `low` for `docs/README.md`, and `none` for a path outside every tier (`src/util/math.ts`).
+
+### US-POL-06: A prefix-sharing sibling does not match
+**Test:** `policy: a prefix-sharing sibling does not match`
+
+**As** the scope-check step trusting the matcher not to over-classify,
+**When** `REQDRIVE_POLICY_JSON.riskTiers.high` is `["src/auth"]`,
+**Then** `policy_tier_for_path` returns `none` for `src/auth.sh` and `src/authorization/x.ts` — both share the `src/auth` character prefix but neither sits at a `/` directory boundary, which is exactly the trap a glob (`src/auth*`) would have fallen into.
+
+### US-POL-07: Highest tier wins when a path matches two
+**Test:** `policy: highest tier wins when a path matches two`
+
+**As** the scope-check step needing one definitive tier per path,
+**When** `REQDRIVE_POLICY_JSON.riskTiers.high` is `["src/auth"]` and `riskTiers.low` is `["src/auth/keys"]`,
+**Then** `policy_tier_for_path 'src/auth/keys/rsa.pem'` returns `high`, because tiers are probed in descending risk order and the first match wins.
+
+### US-POL-08: No riskTiers means every path is untiered
+**Test:** `policy: no riskTiers means every path is untiered`
+
+**As** a maintainer who has not yet configured risk tiers,
+**When** `REQDRIVE_POLICY_JSON` is `{}`,
+**Then** `policy_tier_for_path` returns `none` for every path, so the absence of policy configuration is safe by default rather than an error.
