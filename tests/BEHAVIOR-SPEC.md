@@ -1481,3 +1481,40 @@ matcher Task 34's scope check consumes.
 **As** a maintainer who has not yet configured risk tiers,
 **When** `REQDRIVE_POLICY_JSON` is `{}`,
 **Then** `policy_tier_for_path` returns `none` for every path, so the absence of policy configuration is safe by default rather than an error.
+
+## Module 18: scope check (lib/policy.sh + lib/run.sh)
+
+`policy_scope_check <agent_dir> <iteration> <tests_passed>` runs after every
+implementation iteration's commit-verification step. It diffs the commit the
+agent just made (`git diff --name-only HEAD~1 HEAD`), classifies each changed
+path with `policy_tier_for_path`, and treats a `high`-tier path changed in an
+iteration whose `testCommand` run did not pass as a finding. `warn` (the
+default, `REQDRIVE_POLICY_SCOPE_CHECK`) appends the finding to
+`scope-findings.txt`, logs it, and returns 0 so the pipeline continues;
+`block` does the same and returns 1, and `run_pipeline` treats that as a
+policy pre-condition failure — it writes `run.json` status `failed` and exits
+`EXIT_PREFLIGHT_FAILED` (8), the same code preflight checks use, rather than
+inventing a new one. With no `policy` configured at all, `REQDRIVE_POLICY_JSON`
+defaults to `{}`, every path classifies as `none`, and no finding is ever
+produced — the feature is off by construction, not by a separate flag.
+
+### US-SCOPE-01: Warn mode logs a finding and continues
+**Test:** `scope: warn mode logs a finding and continues`
+
+**As** a maintainer who wants visibility into high-risk changes without blocking unattended runs,
+**When** `policy.riskTiers.high` matches a path the agent's commit touches, `policy.scopeCheck` is `"warn"`, and no `testCommand` is configured (so the iteration has no passing test run),
+**Then** the pipeline still exits `0`, and the run log records a "high-risk" finding — the gate observes without enforcing.
+
+### US-SCOPE-02: Block mode aborts with EXIT_PREFLIGHT_FAILED
+**Test:** `scope: block mode aborts with EXIT_PREFLIGHT_FAILED`
+
+**As** a maintainer who wants a hard stop on unverified high-risk changes,
+**When** the same high-risk path is touched with no passing test run and `policy.scopeCheck` is `"block"`,
+**Then** the pipeline aborts with exit code `8` (`EXIT_PREFLIGHT_FAILED`), reusing the existing pre-condition failure code instead of adding a new one.
+
+### US-SCOPE-03: Absent policy produces no findings
+**Test:** `scope: absent policy produces no findings`
+
+**As** a maintainer who has not configured `policy` in `reqdrive.json`,
+**When** the same agent run touches the same files with no risk tiers defined,
+**Then** the pipeline exits `0` and the run log contains no "high-risk" finding — the scope check is inert without an explicit `policy.riskTiers` configuration, proving `warn` is the default without also being a silent no-op.

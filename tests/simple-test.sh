@@ -3175,6 +3175,55 @@ test_result "policy: highest tier wins when a path matches two" $?
 test_result "policy: no riskTiers means every path is untiered" $?
 
 echo ""
+echo "--- Scope Check ---"
+
+# Test: warn mode records a finding and does not abort
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/sc-warn"
+  jq '.policy = {"riskTiers":{"high":["MARKER.txt"]},"scopeCheck":"warn"}' \
+    "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.t" && mv "$PH_ROOT/r.t" "$PH_ROOT/reqdrive.json"
+  git -C "$PH_ROOT" add -A && git -C "$PH_ROOT" commit -q -m "chore: policy"
+  ph_fake_claude full
+  ph_fake_gh
+  rc=$(ph_run REQ-01)
+  [ "$rc" = "0" ]
+  grep -qi "high-risk" "$PH_ROOT/run.log"
+)
+test_result "scope: warn mode logs a finding and continues" $?
+
+# Test: block mode aborts with EXIT_PREFLIGHT_FAILED
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/sc-block"
+  jq '.policy = {"riskTiers":{"high":["MARKER.txt"]},"scopeCheck":"block"}' \
+    "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.t" && mv "$PH_ROOT/r.t" "$PH_ROOT/reqdrive.json"
+  git -C "$PH_ROOT" add -A && git -C "$PH_ROOT" commit -q -m "chore: policy"
+  ph_fake_claude full
+  ph_fake_gh
+  rc=$(ph_run REQ-01)
+  [ "$rc" = "8" ]
+)
+test_result "scope: block mode aborts with EXIT_PREFLIGHT_FAILED" $?
+
+# Test: no policy means no scope finding at all
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/sc-none"
+  ph_fake_claude full
+  ph_fake_gh
+  rc=$(ph_run REQ-01)
+  [ "$rc" = "0" ]
+  if grep -qi "high-risk" "$PH_ROOT/run.log"; then
+    exit 1
+  fi
+)
+test_result "scope: absent policy produces no findings" $?
+
+echo ""
 echo "========================================"
 echo "  Results: $PASS passed, $FAIL failed, $SKIP skipped, $TOTAL total"
 echo "========================================"

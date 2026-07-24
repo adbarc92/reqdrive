@@ -4,7 +4,7 @@
   "environment": {
     "claude": true
   },
-  "suiteSha256": "85971c07062bc0c1a0a3f11b7b9826190ab5505548a32f26b9d82e82108113b3",
+  "suiteSha256": "78f1e030f846f69228f062f0c061c6a0287f5dd2d7922a5b8a16ed9f17f4d378",
   "gateSha256": "a1bcae04a802b2d54c2ff57956f33c2195b5187acc775947400b4da8d853f83b",
   "tests": [
     {
@@ -652,6 +652,18 @@
     {
       "name": "schema: validate_prd_schema rejects story missing title",
       "story": "US-SCH-28"
+    },
+    {
+      "name": "scope: absent policy produces no findings",
+      "story": "US-SCOPE-03"
+    },
+    {
+      "name": "scope: block mode aborts with EXIT_PREFLIGHT_FAILED",
+      "story": "US-SCOPE-02"
+    },
+    {
+      "name": "scope: warn mode logs a finding and continues",
+      "story": "US-SCOPE-01"
     },
     {
       "name": "story: get_story_details returns correct story by ID",

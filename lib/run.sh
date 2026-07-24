@@ -1055,12 +1055,14 @@ EOF
     RUN_SUMMARY_ITERATIONS=$((RUN_SUMMARY_ITERATIONS + 1))
 
     # Run test command if configured (observation mode — warn, don't abort)
+    local iter_tests_passed=0
     if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
       log_info "Running test command: $REQDRIVE_TEST_COMMAND"
       local test_log="$agent_dir/iteration-$i.test.log"
       if eval "$REQDRIVE_TEST_COMMAND" > "$test_log" 2>&1; then
         log_info "Tests passed after iteration $i"
         RUN_SUMMARY_TESTS_PASSED=$((RUN_SUMMARY_TESTS_PASSED + 1))
+        iter_tests_passed=1
       else
         log_warn "Tests FAILED after iteration $i (see iteration-$i.test.log)"
         RUN_SUMMARY_TESTS_FAILED=$((RUN_SUMMARY_TESTS_FAILED + 1))
@@ -1077,6 +1079,17 @@ EOF
     else
       log_warn "Expected commit for $next_story, latest commit: $latest_commit_msg"
       RUN_SUMMARY_COMMITS_MISSING=$((RUN_SUMMARY_COMMITS_MISSING + 1))
+    fi
+
+    # Scope check: a high-risk path changed without a passing test run is a
+    # policy pre-condition finding. warn (default) logs it and continues;
+    # block aborts with EXIT_PREFLIGHT_FAILED, reusing the existing code
+    # rather than inventing a new one.
+    source "$REQDRIVE_ROOT/lib/policy.sh"
+    if ! policy_scope_check "$agent_dir" "$i" "$iter_tests_passed"; then
+      write_run_status "$agent_dir" "failed" "$req_id" "$i" "$EXIT_PREFLIGHT_FAILED"
+      run_completion_hook "$req_id" "failed" "" "$branch" "$EXIT_PREFLIGHT_FAILED"
+      exit "$EXIT_PREFLIGHT_FAILED"
     fi
 
     # Increment attempt counter for this story in prd.json

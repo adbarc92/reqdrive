@@ -158,6 +158,57 @@ By default, reqdrive runs in **interactive mode**, which prompts for permission 
 
 Requirement content is scanned for dangerous patterns (shell injection, path traversal). PRD-derived fields are sanitized before prompt expansion.
 
+## Risk Tiers and Scope Checking
+
+`reqdrive.json`'s `policy` field (see Configuration above) lets you flag
+sensitive paths and have the pipeline notice when they change without
+evidence that tests still pass.
+
+**Prefix semantics.** `policy.riskTiers` maps tier names (`high`, `medium`,
+`low`) to arrays of path prefixes — not globs. A changed path matches a
+tier when it equals the prefix exactly or begins with `"<prefix>/"`. `src/auth`
+matches `src/auth` and `src/auth/login.ts`, but not `src/authorization/x.ts` —
+sharing characters isn't sharing a directory boundary. When a path matches
+prefixes in more than one tier, the highest tier wins.
+
+**The violation condition.** After each implementation iteration, the
+pipeline diffs the commit the agent just made (`git diff HEAD~1 HEAD`) and
+classifies the changed paths. A finding is a **high-risk path changed in an
+iteration whose `testCommand` run did not pass** — including iterations
+where no `testCommand` is configured at all, since there's no evidence
+either way.
+
+**Two modes**, set via `policy.scopeCheck`:
+
+- `"warn"` (default) — the finding is appended to
+  `.reqdrive/runs/<req-slug>/scope-findings.txt`, logged to the console, and
+  rendered into the PR body under a `### Scope findings` section. The
+  pipeline continues and the exit code is unchanged.
+- `"block"` — the same finding is logged, and the iteration additionally
+  aborts the pipeline with exit code 8 (`EXIT_PREFLIGHT_FAILED`) — reused
+  because a scope violation is a policy pre-condition, not a new failure
+  category.
+
+**Why `warn` is the default.** This is a hard gate the roadmap has wanted for
+a while, but the architecture's "warn before enforce" principle applies: no
+run has generated warn-mode data yet, so there's no basis for judging the
+gate's false-positive rate against real risk-tier configurations. `warn`
+ships first so that data can accumulate; flipping to `"block"` is a one-line
+config change once it does.
+
+```json
+{
+  "policy": {
+    "riskTiers": {
+      "high": ["src/auth", "src/payments"],
+      "medium": ["src/api"],
+      "low": ["docs"]
+    },
+    "scopeCheck": "warn"
+  }
+}
+```
+
 ## Testing
 
 ```bash

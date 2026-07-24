@@ -178,6 +178,18 @@ VSEOF
     )
   fi
 
+  # Load scope-check findings if any exist (warn-mode high-risk path
+  # violations from policy_scope_check, one line per iteration)
+  local scope_findings_file="$agent_dir/scope-findings.txt"
+  local scope_section=""
+  if [ -f "$scope_findings_file" ] && [ -s "$scope_findings_file" ]; then
+    scope_section=$(printf '\n### Scope findings\n\n')
+    while IFS= read -r finding_line; do
+      [ -n "$finding_line" ] || continue
+      scope_section+="- $finding_line"$'\n'
+    done < "$scope_findings_file"
+  fi
+
   # Build label flags with proper sanitization
   local labels=()
 
@@ -219,6 +231,7 @@ VSEOF
 $commits
 \`\`\`
 $verification_section
+$scope_section
 
 ## Validation Checklist
 
