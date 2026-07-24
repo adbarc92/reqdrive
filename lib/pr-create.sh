@@ -148,15 +148,20 @@ create_pr() {
     v_verification_passed=$(jq -r '.verification_passed' "$verification_file" 2>/dev/null || echo "null")
 
     local v_status_icon="⚠️"
+    local v_verification_reason="Not verified — no test command configured."
     if [ "$v_verification_passed" = "true" ]; then
       v_status_icon="✅"
+      v_verification_reason="Verification passed."
     elif [ "$v_verification_passed" = "false" ]; then
       v_status_icon="❌"
+      v_verification_reason="Verification failed — tests did not pass."
     fi
 
     verification_section=$(cat <<VSEOF
 
 ## Pipeline Verification $v_status_icon
+
+$v_verification_reason
 
 | Metric | Result |
 |--------|--------|

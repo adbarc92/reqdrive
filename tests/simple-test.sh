@@ -2571,6 +2571,38 @@ test_result "draft gate: stories omitting passes force draft" $?
 )
 test_result "draft gate: full evidence produces non-draft PR" $?
 
+# Test: preflight warns when no testCommand is configured
+(
+  set -e
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  out=$(REQDRIVE_TEST_COMMAND="" check_test_command_configured 2>&1) || true
+  echo "$out" | grep -q "all PRs will be created as drafts"
+)
+test_result "preflight: warns when no testCommand is configured" $?
+
+# Test: preflight is silent when a testCommand exists
+(
+  set -e
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  out=$(REQDRIVE_TEST_COMMAND="npm test" check_test_command_configured 2>&1) || true
+  [ -z "$out" ]
+)
+test_result "preflight: silent when testCommand is configured" $?
+
+# Test: PR body distinguishes 'not configured' from 'tests failed'
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/dg-reason"
+  ph_fake_claude full
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  grep -q "no test command configured" "$PH_ROOT/gh-args.log"
+)
+test_result "pr: body states why verification was not run" $?
+
 echo ""
 echo "--- Harness Safety ---"
 

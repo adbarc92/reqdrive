@@ -131,6 +131,16 @@ check_requirement_exists() {
   return 0
 }
 
+# Warn when no testCommand is configured. Nothing will independently verify
+# the agent's output, so every PR will be created as a draft.
+check_test_command_configured() {
+  if [ -z "${REQDRIVE_TEST_COMMAND:-}" ]; then
+    echo "[WARN]  No testCommand configured — nothing will verify the agent's output, so all PRs will be created as drafts." >&2
+    return 0
+  fi
+  return 0
+}
+
 # Check we're in a git repository
 check_git_repo() {
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -184,6 +194,10 @@ run_preflight_checks() {
   # Non-critical checks (warnings only)
   if [ "$failed" -eq 0 ]; then
     check_branch_conflicts "$branch" || true
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    check_test_command_configured || true
   fi
 
   if [ "$failed" -eq 1 ]; then

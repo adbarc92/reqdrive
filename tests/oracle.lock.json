@@ -4,7 +4,7 @@
   "environment": {
     "claude": true
   },
-  "suiteSha256": "7db197a6c5d9b5735ac8edd7640835083ecd23401e35c2c4cdba1d6781099068",
+  "suiteSha256": "affb2bea6198f7ff1c8bc6443097f6049801d5e9e1317b62b1407288c7b223b3",
   "gateSha256": "a1bcae04a802b2d54c2ff57956f33c2195b5187acc775947400b4da8d853f83b",
   "tests": [
     {
@@ -262,6 +262,10 @@
       "story": "US-PR-05"
     },
     {
+      "name": "pr: body states why verification was not run",
+      "story": "US-PR-06"
+    },
+    {
       "name": "pr: create_pr outputs URL to stdout",
       "story": "US-PR-01"
     },
@@ -296,6 +300,14 @@
     {
       "name": "preflight: check_requirements_dir passes with .md files",
       "story": "US-PRE-05"
+    },
+    {
+      "name": "preflight: silent when testCommand is configured",
+      "story": "US-PRE-08"
+    },
+    {
+      "name": "preflight: warns when no testCommand is configured",
+      "story": "US-PRE-07"
     },
     {
       "name": "prompt: build_planning_prompt includes PRD schema",

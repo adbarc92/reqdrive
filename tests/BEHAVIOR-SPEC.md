@@ -1041,6 +1041,20 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** I call `check_requirement_exists "REQ-01"` against a requirements directory containing `REQ-01-test-feature.md`,
 **Then** it returns 0.
 
+### US-PRE-07: check_test_command_configured warns when testCommand is empty
+**Test:** `preflight: warns when no testCommand is configured`
+
+**As** a preflight checker,
+**When** I call `check_test_command_configured` with `REQDRIVE_TEST_COMMAND` unset/empty,
+**Then** it prints a warning containing "all PRs will be created as drafts" and still returns 0.
+
+### US-PRE-08: check_test_command_configured is silent when testCommand is set
+**Test:** `preflight: silent when testCommand is configured`
+
+**As** a preflight checker,
+**When** I call `check_test_command_configured` with `REQDRIVE_TEST_COMMAND` set to a non-empty command,
+**Then** it prints nothing.
+
 ---
 
 ## Module 8: pr-create.sh
@@ -1079,6 +1093,13 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a pipeline runner,
 **When** no `verification-summary.json` exists in the run directory and I call `create_pr`,
 **Then** the PR body passed to `gh pr create` does not contain "Pipeline Verification".
+
+### US-PR-06: PR body states why verification was not run
+**Test:** `pr: body states why verification was not run`
+
+**As** a pipeline runner,
+**When** a full scripted pipeline run completes with no `testCommand` configured (`verification_passed` is `null`),
+**Then** the PR body passed to `gh pr create` contains the reason "no test command configured".
 
 ---
 
