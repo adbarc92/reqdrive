@@ -307,6 +307,17 @@ build_implementation_prompt() {
   story_criteria="${story_criteria//@@/}"
   sanitized_content="${sanitized_content//@@/}"
 
+  # sanitize_for_prompt escapes $ for the OLD unquoted heredoc. The heredoc
+  # is quoted now and this file is never re-evaluated by a shell, so the
+  # backslash is noise that reaches the agent — including the commit message
+  # it is told to use. Reverse it here rather than changing sanitize_for_prompt,
+  # which has other callers.
+  story_id="${story_id//\\\$/\$}"
+  story_title="${story_title//\\\$/\$}"
+  story_description="${story_description//\\\$/\$}"
+  story_criteria="${story_criteria//\\\$/\$}"
+  sanitized_content="${sanitized_content//\\\$/\$}"
+
   local tpl
   tpl=$(cat <<'PROMPT_IMPL'
 # Agent Instructions: Implement Story @@STORY_ID@@

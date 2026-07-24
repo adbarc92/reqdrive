@@ -889,7 +889,7 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 
 **As** a pipeline runner,
 **When** a story's `acceptanceCriteria` includes `"Check ${HOME} variable"` and I call `build_implementation_prompt`,
-**Then** the prompt file does not contain the actual expanded `$HOME` path, but does contain the literal escaped text `Check \${HOME} variable` and `US-003`.
+**Then** the prompt file does not contain the shell-expanded `$HOME` path, but does contain the criterion text `Check ${HOME} variable` (the `$` reaches the agent without a stray backslash, per Task 28) and `US-003`.
 
 ### US-RUN-31: select_next_story — selects a story that omits the passes field
 **Test:** `story: select_next_story selects a story omitting passes`
@@ -933,6 +933,15 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** the maintainer relying on bash's `${var//pat/repl}` substitution semantics,
 **When** `build_implementation_prompt` is called with a story titled `auth & billing`,
 **Then** the rendered prompt contains the line `**Title:** auth & billing` verbatim — the unquoted `&`-expands-to-match behavior (default before bash 5.2, or without the `patsub_replacement` guard) does not corrupt injected PRD content.
+
+---
+
+### US-RUN-36: build_implementation_prompt — dollar signs reach the agent without stray backslashes
+**Test:** `prompt: dollar signs reach the agent without stray backslashes`
+
+**As** the maintainer who removed the unquoted-heredoc justification for escaping `$`,
+**When** `build_implementation_prompt` is called with a story titled `Fix $HOME handling`,
+**Then** the rendered prompt contains the line `**Title:** Fix $HOME handling` verbatim, contains no stray `\$` before `HOME`, and the commit-message line reads `feat: [US-9] - Fix $HOME handling` — `sanitize_for_prompt`'s `$` → `\$` escaping (still load-bearing for its other callers) is reversed at injection time so the agent never sees a backslash that was only ever needed for the old unquoted heredoc.
 
 ---
 

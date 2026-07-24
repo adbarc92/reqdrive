@@ -5,13 +5,13 @@ You are an autonomous coding agent. Implement the following user story.
 ## Your Story
 
 - **ID:** US-042
-- **Title:** Handle auth & billing \$HOME with 'id' and a \ backslash
-- **Description:** Covers STORY_ID forgery, ampersands & escapes, and \${VAR} expansion
+- **Title:** Handle auth & billing $HOME with 'id' and a \ backslash
+- **Description:** Covers STORY_ID forgery, ampersands & escapes, and ${VAR} expansion
 
 ### Acceptance Criteria
 
 - Given input with & and \, the output is unchanged
-- Check \${HOME} is not expanded
+- Check ${HOME} is not expanded
 
 ## Instructions
 
@@ -20,7 +20,7 @@ You are an autonomous coding agent. Implement the following user story.
 3. Implement **this story only** (US-042)
 4. Run quality checks (test, typecheck, lint as appropriate)
 5. If checks pass:
-   - Commit with message: `feat: [US-042] - Handle auth & billing \$HOME with 'id' and a \ backslash`
+   - Commit with message: `feat: [US-042] - Handle auth & billing $HOME with 'id' and a \ backslash`
    - Update PRD: set `passes: true` for story US-042
    - Append progress to `progress.txt`
 

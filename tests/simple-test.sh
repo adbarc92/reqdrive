@@ -1319,7 +1319,7 @@ test_result "impl prompt: neutralizes backticks in story description" $?
     exit 1
   fi
   # Positive: the criterion text must actually be present.
-  grep -q 'Check \\${HOME} variable' "$prompt_file"
+  grep -q 'Check ${HOME} variable' "$prompt_file"
   grep -q 'US-003' "$prompt_file"
 )
 test_result "impl prompt: neutralizes \${VAR} in acceptance criteria" $?
@@ -1842,6 +1842,36 @@ test_result "prompt: build_planning_prompt preserves dollar signs in content" $?
   diff -u "$TEST_TEMP/golden-norm.md" "$TEST_TEMP/golden-check-norm.md"
 )
 test_result "prompt: implementation prompt matches golden file" $?
+
+# Test: dollar signs reach the agent without stray backslashes.
+# sanitize_for_prompt escapes $ -> \$ for the old unquoted heredoc;
+# build_implementation_prompt now reverses that escaping since the
+# heredoc is quoted and the file is never re-evaluated by a shell.
+(
+  set -e
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  prompt_file="$TEST_TEMP/prompt-dollar.md"
+  story_json='{"title":"Fix $HOME handling","description":"d","acceptanceCriteria":["a"],"id":"US-9","priority":1,"passes":false}'
+  sanitized_content="body"
+
+  build_implementation_prompt "$prompt_file" "US-9" "$story_json" "$sanitized_content"
+
+  # Positive: the title reaches the prompt verbatim.
+  grep -q '\*\*Title:\*\* Fix \$HOME handling' "$prompt_file"
+  if grep -q 'Fix \\$HOME' "$prompt_file"; then
+    echo "unexpected: stray backslash before \$HOME" >&2
+    exit 1
+  fi
+  # The commit message the agent is told to use must be clean too.
+  grep -q 'feat: \[US-9\] - Fix \$HOME handling' "$prompt_file"
+)
+test_result "prompt: dollar signs reach the agent without stray backslashes" $?
 
 # Test: shopt guard tolerates bash without patsub_replacement
 (
