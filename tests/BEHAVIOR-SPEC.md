@@ -1405,3 +1405,40 @@ not part of this spec (no story, not locked).
 **As** an operator re-running a requirement after a prior run finished,
 **When** `run.json` exists with `status: "completed"` (not `"running"`) and `reqdrive launch REQ-01` is invoked,
 **Then** the duplicate-run guard is skipped and `launch` prints `Launched REQ-01` rather than an `already running` error, so only a genuinely in-flight run blocks a re-launch.
+
+## Module 16: policy config
+
+`policy` is an optional object inside `reqdrive.json` — one file, one loader,
+one schema validator — rather than a separate `.reqdrive/policy.json`. It is
+the config surface Tasks 33 (scope checking) and 34 (risk tiers) consume.
+`reqdrive_load_config` does not schema-validate; it only reads `policy` with
+safe defaults, so a malformed `policy` object is caught by `reqdrive validate`
+(`validate_config_schema`), not by every command that loads config.
+
+### US-POL-01: A well-formed policy object validates
+**Test:** `policy: a well-formed policy object validates`
+
+**As** a maintainer configuring evidence policy in `reqdrive.json`,
+**When** `policy.riskTiers` maps tier names to arrays of path prefixes and `policy.scopeCheck` is `"warn"`,
+**Then** `reqdrive validate` exits `0` — a well-formed `policy` object does not trip schema validation.
+
+### US-POL-02: An invalid scopeCheck value is rejected
+**Test:** `policy: rejects an invalid scopeCheck value`
+
+**As** a maintainer relying on schema validation to catch config typos before a run,
+**When** `policy.scopeCheck` is set to a value other than `"warn"` or `"block"` (e.g. `"maybe"`),
+**Then** `reqdrive validate` exits `3` (`EXIT_CONFIG_ERROR`) and the output names `scopeCheck`, so the operator knows exactly which field is wrong.
+
+### US-POL-03: A non-array risk tier is rejected
+**Test:** `policy: rejects a non-array risk tier`
+
+**As** a maintainer relying on schema validation to catch config typos before a run,
+**When** `policy.riskTiers` maps a tier name to a bare string instead of an array of path prefixes,
+**Then** `reqdrive validate` exits `3` (`EXIT_CONFIG_ERROR`) and the output names `riskTiers`, so the operator knows exactly which field is wrong.
+
+### US-POL-04: scopeCheck defaults to warn when policy is absent
+**Test:** `policy: scopeCheck defaults to warn when absent`
+
+**As** a maintainer with no `policy` block in `reqdrive.json` yet,
+**When** `reqdrive_load_config` runs against a manifest with no `policy` key,
+**Then** `REQDRIVE_POLICY_SCOPE_CHECK` is exported as `"warn"` and `REQDRIVE_POLICY_JSON` is exported as `"{}"`, so downstream consumers (Tasks 33/34) never see an unset or malformed policy.

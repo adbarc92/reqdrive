@@ -2901,6 +2901,62 @@ test_result "verify: exits 4 when --ref names a nonexistent branch" $?
 test_result "errors: verification and concurrency codes are defined" $?
 
 echo ""
+echo "--- Policy Config ---"
+
+# Test: a well-formed policy object validates
+(
+  set -e
+  cd "$TEST_TEMP" && mkdir -p pol-ok && cd pol-ok
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","policy":{"riskTiers":{"high":["src/auth"],"low":["docs"]},"scopeCheck":"warn"}}
+EOF
+  "$REQDRIVE_ROOT/bin/reqdrive" validate > /dev/null 2>&1
+)
+test_result "policy: a well-formed policy object validates" $?
+
+# Test: an invalid scopeCheck value is rejected
+(
+  set -e
+  cd "$TEST_TEMP" && mkdir -p pol-bad && cd pol-bad
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","policy":{"scopeCheck":"maybe"}}
+EOF
+  rc=0
+  out=$("$REQDRIVE_ROOT/bin/reqdrive" validate 2>&1) || rc=$?
+  [ "$rc" -eq 3 ]
+  echo "$out" | grep -q "scopeCheck"
+)
+test_result "policy: rejects an invalid scopeCheck value" $?
+
+# Test: riskTiers must map tier names to arrays
+(
+  set -e
+  cd "$TEST_TEMP" && mkdir -p pol-tiers && cd pol-tiers
+  cat > reqdrive.json <<'EOF'
+{"version":"0.3.0","policy":{"riskTiers":{"high":"src/auth"}}}
+EOF
+  rc=0
+  out=$("$REQDRIVE_ROOT/bin/reqdrive" validate 2>&1) || rc=$?
+  [ "$rc" -eq 3 ]
+  echo "$out" | grep -q "riskTiers"
+)
+test_result "policy: rejects a non-array risk tier" $?
+
+# Test: scopeCheck defaults to warn when policy is absent
+(
+  set -e
+  cd "$TEST_TEMP" && mkdir -p pol-default && cd pol-default
+  echo '{"version":"0.3.0"}' > reqdrive.json
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/config.sh"
+  reqdrive_load_config
+  [ "$REQDRIVE_POLICY_SCOPE_CHECK" = "warn" ]
+  [ "$REQDRIVE_POLICY_JSON" = "{}" ]
+)
+test_result "policy: scopeCheck defaults to warn when absent" $?
+
+echo ""
 echo "--- Doc Coverage ---"
 
 # Test: every dispatch command appears in README
@@ -2923,10 +2979,12 @@ test_result "docs: every CLI command is documented in README" $?
 (
   set -e
   # DOC_EXEMPT — derived at runtime, not settable in reqdrive.json:
-  #   REQDRIVE_MANIFEST      resolved path of the found manifest
-  #   REQDRIVE_PROJECT_ROOT  parent directory of the manifest
-  #   REQDRIVE_ROOT          reqdrive's own install directory
-  exempt="REQDRIVE_MANIFEST REQDRIVE_PROJECT_ROOT REQDRIVE_ROOT"
+  #   REQDRIVE_MANIFEST         resolved path of the found manifest
+  #   REQDRIVE_PROJECT_ROOT     parent directory of the manifest
+  #   REQDRIVE_ROOT             reqdrive's own install directory
+  #   REQDRIVE_POLICY_JSON      derived from the single documented `policy` field, not a field itself
+  #   REQDRIVE_POLICY_SCOPE_CHECK  derived from the single documented `policy` field, not a field itself
+  exempt="REQDRIVE_MANIFEST REQDRIVE_PROJECT_ROOT REQDRIVE_ROOT REQDRIVE_POLICY_JSON REQDRIVE_POLICY_SCOPE_CHECK"
   vars=$(grep -oE 'REQDRIVE_[A-Z_]+' "$REQDRIVE_ROOT/lib/config.sh" | sort -u)
   [ -n "$vars" ]
   missing=""

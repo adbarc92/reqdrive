@@ -82,6 +82,11 @@ reqdrive_load_config() {
   # Optional: review command ("builtin" for Claude review, or custom command)
   export REQDRIVE_REVIEW_COMMAND
   REQDRIVE_REVIEW_COMMAND="$(jq -r '.reviewCommand // ""' "$manifest")"
+
+  # Optional: evidence policy (risk tiers, scope-check mode)
+  REQDRIVE_POLICY_JSON=$(jq -c '.policy // {}' "$manifest")
+  REQDRIVE_POLICY_SCOPE_CHECK=$(jq -r '.policy.scopeCheck // "warn"' "$manifest")
+  export REQDRIVE_POLICY_JSON REQDRIVE_POLICY_SCOPE_CHECK
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────
