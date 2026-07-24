@@ -2685,6 +2685,95 @@ MKEOF
 test_result "harness: aborts when mktemp fails" $?
 
 echo ""
+echo "--- Launch Lifecycle ---"
+
+# Test: status reports a completed run with its exit code and PR URL
+(
+  set -e
+  mkdir -p "$TEST_TEMP/ll-completed/docs/requirements"
+  cat > "$TEST_TEMP/ll-completed/reqdrive.json" <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  run_dir="$TEST_TEMP/ll-completed/.reqdrive/runs/req-01"
+  mkdir -p "$run_dir"
+  cat > "$run_dir/run.json" <<'EOF'
+{"version":"0.3.0","req_id":"REQ-01","status":"completed","pid":999999,
+ "iteration":2,"exit_code":0,"pr_url":"https://github.com/test/repo/pull/7",
+ "started":"2026-07-23T10:00:00Z","updated":"2026-07-23T10:05:00Z"}
+EOF
+  out=$(cd "$TEST_TEMP/ll-completed" && "$REQDRIVE_ROOT/bin/reqdrive" status REQ-01 2>&1) || true
+  echo "$out" | grep -q "completed"
+  echo "$out" | grep -q "pull/7"
+)
+test_result "launch: status reports a completed run with its PR URL" $?
+
+# Test: status reports a crashed run when the PID is gone
+# PID 999999 is above Linux's default pid_max, so it is reliably dead
+# without spawning or killing a real process.
+(
+  set -e
+  mkdir -p "$TEST_TEMP/ll-crashed/docs/requirements"
+  cat > "$TEST_TEMP/ll-crashed/reqdrive.json" <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  run_dir="$TEST_TEMP/ll-crashed/.reqdrive/runs/req-01"
+  mkdir -p "$run_dir"
+  cat > "$run_dir/run.json" <<'EOF'
+{"version":"0.3.0","req_id":"REQ-01","status":"running","pid":999999,
+ "iteration":1,"started":"2026-07-23T10:00:00Z","updated":"2026-07-23T10:01:00Z"}
+EOF
+  out=$(cd "$TEST_TEMP/ll-crashed" && "$REQDRIVE_ROOT/bin/reqdrive" status REQ-01 2>&1) || true
+  echo "$out" | grep -qi "crashed"
+)
+test_result "launch: status reports a crashed run when the PID is gone" $?
+
+# Test: completion hook passes REQ_ID, STATUS and EXIT_CODE to the hook command
+(
+  set -e
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  export REQDRIVE_COMPLETION_HOOK="echo REQ_ID=\$REQ_ID STATUS=\$STATUS EXIT_CODE=\$EXIT_CODE > $TEST_TEMP/ll-hook-out.txt"
+  run_completion_hook "REQ-01" "failed" "" "reqdrive/req-01" "5" 2>/dev/null
+  grep -q "REQ_ID=REQ-01" "$TEST_TEMP/ll-hook-out.txt"
+  grep -q "STATUS=failed" "$TEST_TEMP/ll-hook-out.txt"
+  grep -q "EXIT_CODE=5" "$TEST_TEMP/ll-hook-out.txt"
+)
+test_result "launch: completion hook passes REQ_ID, STATUS and EXIT_CODE" $?
+
+# Test: re-launch is permitted after the previous run completed (status != "running")
+(
+  set -e
+  proj="$TEST_TEMP/ll-relaunch"
+  mkdir -p "$proj/docs/requirements"
+  cat > "$proj/reqdrive.json" <<'EOF'
+{"version":"0.3.0","requirementsDir":"docs/requirements"}
+EOF
+  cat > "$proj/docs/requirements/REQ-01-demo.md" <<'EOF'
+# REQ-01: Demo
+EOF
+  run_dir="$proj/.reqdrive/runs/req-01"
+  mkdir -p "$run_dir"
+  cat > "$run_dir/run.json" <<'EOF'
+{"version":"0.3.0","req_id":"REQ-01","status":"completed","pid":999999,
+ "iteration":2,"exit_code":0,"pr_url":"https://github.com/test/repo/pull/7",
+ "started":"2026-07-23T10:00:00Z","updated":"2026-07-23T10:05:00Z"}
+EOF
+  # No git repo here: the backgrounded pipeline fails preflight almost
+  # instantly, which is irrelevant to this assertion. cmd_launch's
+  # synchronous output — printed before it ever backgrounds — is what
+  # proves the duplicate-run guard was skipped because status != "running".
+  out=$(cd "$proj" && "$REQDRIVE_ROOT/bin/reqdrive" launch REQ-01 2>&1)
+  echo "$out" | grep -q "Launched REQ-01"
+  ! echo "$out" | grep -qi "already running"
+)
+test_result "launch: re-launch is permitted after the previous run completed" $?
+
+echo ""
 echo "========================================"
 echo "  Results: $PASS passed, $FAIL failed, $SKIP skipped, $TOTAL total"
 echo "========================================"

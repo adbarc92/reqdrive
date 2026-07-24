@@ -1246,3 +1246,40 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a maintainer relying on the README as the source of truth for the CLI's accepted flags,
 **When** the option-parsing `case` blocks in `bin/reqdrive` (the `run`/`launch` block and the `plan` block) are parsed for case labels matching `^(-[a-z]\|)?--[a-z-]+(\|--[a-z-]+)*\)$` and split on `|` — so free `--` literals inside strings, such as the `--help` inside the usage message `echo "Run 'reqdrive run --help' for usage."`, are not mistaken for flags,
 **Then** every extracted flag (`--interactive`, `--unsafe`, `--dangerously-skip-permissions`, `--force`, `--resume`) appears in `README.md` — so adding a new accepted flag, or an alias like `--dangerously-skip-permissions`, without documenting it fails the suite.
+
+## Module 15: launch lifecycle
+
+State-transition cases from `docs/LAUNCH-TEST-PLAN.md` (cases 2, 5, 7, 8):
+asserted directly on `run.json` and CLI output, without spawning a real
+background process. Cases 1, 4 and 6 need real process liveness and signal
+semantics that are unreliable under MSYS2, so they run only in the
+Linux-only `launch-lifecycle` CI job (`tests/launch-lifecycle.sh`), which is
+not part of this spec (no story, not locked).
+
+### US-LAUNCH-01: Status reports a completed run with its PR URL
+**Test:** `launch: status reports a completed run with its PR URL`
+
+**As** an operator checking on a finished background run,
+**When** `run.json` has `status: "completed"`, `exit_code: 0`, and a `pr_url`, and `reqdrive status REQ-01` is invoked,
+**Then** the output shows `completed` and the PR URL, so a finished run's outcome is visible without reading `run.json` by hand.
+
+### US-LAUNCH-02: Status reports a crashed run when the PID is gone
+**Test:** `launch: status reports a crashed run when the PID is gone`
+
+**As** an operator checking on a background run that may have died unexpectedly,
+**When** `run.json` still says `status: "running"` but its recorded `pid` (`999999`, reliably dead — above Linux's default `pid_max`) is no longer alive, and `reqdrive status REQ-01` is invoked,
+**Then** the output reports `crashed`, so a stale "running" status left behind by a killed process is not mistaken for an active run.
+
+### US-LAUNCH-03: Completion hook passes REQ_ID, STATUS and EXIT_CODE
+**Test:** `launch: completion hook passes REQ_ID, STATUS and EXIT_CODE`
+
+**As** a maintainer wiring `completionHook` up to external notifications,
+**When** `run_completion_hook` is called with a req id, status and exit code, and the configured hook command echoes `$REQ_ID`, `$STATUS` and `$EXIT_CODE` to a file,
+**Then** the file contains the exact values passed in, so the hook's environment contract is proven, not just its existence.
+
+### US-LAUNCH-04: Re-launch is permitted after the previous run completed
+**Test:** `launch: re-launch is permitted after the previous run completed`
+
+**As** an operator re-running a requirement after a prior run finished,
+**When** `run.json` exists with `status: "completed"` (not `"running"`) and `reqdrive launch REQ-01` is invoked,
+**Then** the duplicate-run guard is skipped and `launch` prints `Launched REQ-01` rather than an `already running` error, so only a genuinely in-flight run blocks a re-launch.
