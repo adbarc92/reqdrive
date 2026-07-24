@@ -282,70 +282,75 @@ build_implementation_prompt() {
   local story_json="$3"
   local sanitized_content="$4"
 
+  # Pin replacement semantics: bash >= 5.2 expands & in a //-replacement to
+  # the matched text. The option does not exist before 5.2 and shopt -u
+  # returns 1 on an unknown option, which set -e would turn into an abort.
+  shopt -u patsub_replacement 2>/dev/null || true
+
   local story_title story_description story_criteria
   story_title=$(echo "$story_json" | jq -r '.title')
   story_description=$(echo "$story_json" | jq -r '.description')
   story_criteria=$(echo "$story_json" | jq -r '.acceptanceCriteria | map("- " + .) | join("\n")')
 
-  # Sanitize PRD-derived fields before heredoc expansion.
-  # The unquoted heredoc below expands $vars and $(cmds), so any
-  # attacker-controlled content from the PRD must be escaped first.
+  # Sanitize PRD-derived fields. The heredoc below is quoted, so this is no
+  # longer shell-escaping — it is prompt-injection defence (backticks).
   story_id=$(sanitize_for_prompt "$story_id")
   story_title=$(sanitize_for_prompt "$story_title")
   story_description=$(sanitize_for_prompt "$story_description")
   story_criteria=$(sanitize_for_prompt "$story_criteria")
 
-  cat > "$prompt_file" <<PROMPT_IMPL
-# Agent Instructions: Implement Story ${story_id}
+  local tpl
+  tpl=$(cat <<'PROMPT_IMPL'
+# Agent Instructions: Implement Story @@STORY_ID@@
 
 You are an autonomous coding agent. Implement the following user story.
 
 ## Your Story
 
-- **ID:** ${story_id}
-- **Title:** ${story_title}
-- **Description:** ${story_description}
+- **ID:** @@STORY_ID@@
+- **Title:** @@STORY_TITLE@@
+- **Description:** @@STORY_DESCRIPTION@@
 
 ### Acceptance Criteria
 
-${story_criteria}
+@@STORY_CRITERIA@@
 
 ## Instructions
 
-1. Read the progress file in the \`.reqdrive/runs/\` directory for context from previous iterations
-2. Read the \`prd.json\` file in the same run directory for full PRD context
-3. Implement **this story only** (${story_id})
+1. Read the progress file in the `.reqdrive/runs/` directory for context from previous iterations
+2. Read the `prd.json` file in the same run directory for full PRD context
+3. Implement **this story only** (@@STORY_ID@@)
 4. Run quality checks (test, typecheck, lint as appropriate)
 5. If checks pass:
-   - Commit with message: \`feat: [${story_id}] - ${story_title}\`
-   - Update PRD: set \`passes: true\` for story ${story_id}
-   - Append progress to \`progress.txt\`
+   - Commit with message: `feat: [@@STORY_ID@@] - @@STORY_TITLE@@`
+   - Update PRD: set `passes: true` for story @@STORY_ID@@
+   - Append progress to `progress.txt`
 
 ## Progress Format
 
 Append to progress.txt:
-\`\`\`
-## [Date] - ${story_id}
+```
+## [Date] - @@STORY_ID@@
 - What was implemented
 - Files changed
 - Learnings for future iterations
 ---
-\`\`\`
+```
 
 ## Important
 
-- Implement ONLY story ${story_id}
+- Implement ONLY story @@STORY_ID@@
 - Commit after completing the story
 - Keep tests passing
-- If you discover a dependency issue, update priorities in prd.json and leave this story as \`passes: false\`
+- If you discover a dependency issue, update priorities in prd.json and leave this story as `passes: false`
 
 ## Iteration Summary
 
 At the END of your response, output a summary:
 
-\`\`\`json:iteration-summary
+```json:iteration-summary
 {
-  "storyId": "${story_id}",
+  "storyId": "@@STORY_ID@@",
   "action": "implemented|skipped|failed",
   "filesChanged": ["path/to/file"],
   "testsRun": true,
@@ -353,14 +358,30 @@ At the END of your response, output a summary:
   "committed": true,
   "notes": "Brief description"
 }
-\`\`\`
+```
 
 ---
 
 ## Requirement Document (Reference)
 
-${sanitized_content}
+@@REQUIREMENT@@
 PROMPT_IMPL
+)
+
+  # Quoted replacements — unquoted, & in a value expands to the match.
+  # Order matters: @@STORY_ID@@ is substituted before @@STORY_TITLE@@,
+  # @@STORY_DESCRIPTION@@, and @@STORY_CRITERIA@@ so that a PRD-derived
+  # value containing token-like text (e.g. a description that reads
+  # "...@@STORY_ID@@...") is inserted as inert literal text and cannot be
+  # caught by a still-pending substitution pass. @@REQUIREMENT@@ (the
+  # largest, least-controlled value) goes last for the same reason.
+  tpl="${tpl//@@STORY_ID@@/"$story_id"}"
+  tpl="${tpl//@@STORY_TITLE@@/"$story_title"}"
+  tpl="${tpl//@@STORY_CRITERIA@@/"$story_criteria"}"
+  tpl="${tpl//@@STORY_DESCRIPTION@@/"$story_description"}"
+  tpl="${tpl//@@REQUIREMENT@@/"$sanitized_content"}"
+
+  printf '%s\n' "$tpl" > "$prompt_file"
 }
 
 # ── Story Selection ──────────────────────────────────────────────────────────
