@@ -365,7 +365,7 @@ PROMPT_IMPL
 
 # ── Story Selection ──────────────────────────────────────────────────────────
 
-# Select the next story to implement (highest priority where passes == false)
+# Select the next story to implement (highest priority where passes != true)
 # Args: $1 = prd_file
 # Prints the story ID, or empty string if all complete
 select_next_story() {
@@ -379,7 +379,7 @@ select_next_story() {
 
   local story_id
   story_id=$(jq -r --argjson max "$max_retries" '
-    [.userStories[] | select(.passes == false and ((.attempts // 0) < $max))]
+    [.userStories[] | select(.passes != true and ((.attempts // 0) < $max))]
     | sort_by(.priority)
     | first
     | .id // empty

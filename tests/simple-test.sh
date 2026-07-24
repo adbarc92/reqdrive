@@ -1747,6 +1747,28 @@ PRDEOF
 )
 test_result "story: select_next_story returns empty when all exhausted" $?
 
+# Test: select_next_story selects a story omitting passes
+(
+  set -e
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  cat > "$TEST_TEMP/story-omits-passes.json" <<'PRDEOF'
+{"version":"0.3.0","project":"Test","sourceReq":"REQ-01","userStories":[
+  {"id":"US-001","title":"A","acceptanceCriteria":["a"],"priority":1,"passes":true},
+  {"id":"US-002","title":"B","acceptanceCriteria":["b"],"priority":2}
+]}
+PRDEOF
+
+  result=$(select_next_story "$TEST_TEMP/story-omits-passes.json" 3)
+  [ "$result" = "US-002" ]
+)
+test_result "story: select_next_story selects a story omitting passes" $?
+
 echo ""
 echo "--- Prompt Builders ---"
 

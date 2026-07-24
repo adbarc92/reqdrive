@@ -891,6 +891,13 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** a story's `acceptanceCriteria` includes `"Check ${HOME} variable"` and I call `build_implementation_prompt`,
 **Then** the prompt file does not contain the actual expanded `$HOME` path, but does contain the literal escaped text `Check \${HOME} variable` and `US-003`.
 
+### US-RUN-31: select_next_story — selects a story that omits the passes field
+**Test:** `story: select_next_story selects a story omitting passes`
+
+**As** the pipeline orchestrator,
+**When** the PRD has `US-001` (`passes: true`, priority 1) and `US-002` (priority 2, no `passes` field at all), and `select_next_story` is called,
+**Then** it returns `"US-002"` — a story that omits `passes` is treated as incomplete (`passes != true`), matching Phase 3's completion predicate, so it remains selectable rather than being permanently skipped.
+
 ---
 
 ## Module 6: bin/reqdrive (CLI)

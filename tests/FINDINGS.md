@@ -21,4 +21,6 @@ so it cannot detect a silent defect.
 
 ## Closed
 
-_None yet._
+| # | Location | Finding | Status |
+|---|---|---|---|
+| F7 | `lib/run.sh` `select_next_story` (near line 382) | `select_next_story` used `select(.passes == false and ...)` while Phase 3's completion count used `select(.passes != true)`. A story that omitted the optional `passes` field entirely was never selected for implementation (`== false` doesn't match `null`/absent) yet was counted incomplete by Phase 3 — the PR would draft forever and re-running the pipeline could never make progress on that story (a liveness hole). Fixed in this commit by changing the predicate to `select(.passes != true and ...)` to agree with Phase 3, with a red-first regression test (`story: select_next_story selects a story omitting passes`, US-RUN-31). | **Closed** |
