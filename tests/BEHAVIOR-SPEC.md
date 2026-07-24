@@ -1232,3 +1232,10 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a maintainer relying on the README as the source of truth for the CLI surface,
 **When** the dispatch `case` block in `bin/reqdrive` is parsed for command labels (excluding `-v|--version`, `-h|--help|""`, and `*`),
 **Then** every remaining command appears in `README.md` — so adding a new dispatch command without documenting it fails the suite.
+
+### US-DOC-02: Every config field is documented in README
+**Test:** `docs: every config field is documented in README`
+
+**As** a maintainer relying on the README as the source of truth for `reqdrive.json`,
+**When** every `REQDRIVE_[A-Z_]+` variable exported by `lib/config.sh` is collected, the three derived-path variables (`REQDRIVE_MANIFEST`, `REQDRIVE_PROJECT_ROOT`, `REQDRIVE_ROOT`) are exempted as not settable config fields, and each remaining variable's snake_case suffix is converted to its camelCase `reqdrive.json` field name (e.g. `MAX_STORY_RETRIES` -> `maxStoryRetries`),
+**Then** every derived field name appears in `README.md` — so adding a new config field without documenting it fails the suite.

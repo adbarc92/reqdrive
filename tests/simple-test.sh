@@ -2622,6 +2622,31 @@ echo "--- Doc Coverage ---"
 )
 test_result "docs: every CLI command is documented in README" $?
 
+# Test: every config-backed REQDRIVE_* variable is documented in README
+(
+  set -e
+  # DOC_EXEMPT — derived at runtime, not settable in reqdrive.json:
+  #   REQDRIVE_MANIFEST      resolved path of the found manifest
+  #   REQDRIVE_PROJECT_ROOT  parent directory of the manifest
+  #   REQDRIVE_ROOT          reqdrive's own install directory
+  exempt="REQDRIVE_MANIFEST REQDRIVE_PROJECT_ROOT REQDRIVE_ROOT"
+  vars=$(grep -oE 'REQDRIVE_[A-Z_]+' "$REQDRIVE_ROOT/lib/config.sh" | sort -u)
+  [ -n "$vars" ]
+  missing=""
+  for v in $vars; do
+    case " $exempt " in *" $v "*) continue ;; esac
+    # REQDRIVE_MAX_STORY_RETRIES -> maxStoryRetries
+    field=$(printf '%s\n' "${v#REQDRIVE_}" | awk -F_ '{
+      out = tolower($1)
+      for (i = 2; i <= NF; i++) out = out toupper(substr($i,1,1)) tolower(substr($i,2))
+      print out
+    }')
+    grep -q "$field" "$REQDRIVE_ROOT/README.md" || missing="$missing $field"
+  done
+  [ -z "$missing" ] || { echo "undocumented config fields:$missing" >&2; false; }
+)
+test_result "docs: every config field is documented in README" $?
+
 echo ""
 echo "--- Harness Safety ---"
 

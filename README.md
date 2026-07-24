@@ -93,6 +93,8 @@ reqdrive run REQ-01   # Run pipeline for a requirement
 | `prLabels` | `["agent-generated"]` | Labels to add to PRs |
 | `projectName` | (none) | Project name for PR titles |
 | `completionHook` | (none) | Shell command executed when pipeline completes |
+| `maxStoryRetries` | `3` | Maximum attempts per user story. `select_next_story` skips a story once its `attempts` counter reaches this value, so a story that cannot be implemented does not consume the whole iteration budget |
+| `reviewCommand` | (none) | Post-PR review step. `"builtin"` runs a Claude review of the diff; any other non-empty string is executed as a shell command. Findings are appended to the PR body. Warn-only — it never aborts the pipeline, and it runs after PR creation, so it cannot change the draft decision |
 
 ## Project Layout
 
