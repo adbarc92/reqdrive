@@ -166,6 +166,30 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
 - **[Audit] testCommand: warn-only, promote to hard gate after observing failure patterns.**
   **Why:** False positives in test execution (flaky tests, environment issues) would block the pipeline unnecessarily. Run tests, log results, don't abort — until failure rate data justifies enforcement.
 
+- **[2026-07-23] Vision-based QA agent deferred.**
+  **Why:** Needs Playwright + binary image data; a separate Node/Python product with its own ladder.
+
+- **[2026-07-23] Multi-requirement parallelism (`orchestrate`) deferred.**
+  **Why:** Needs worktree revival (`archive/v1-complex/lib/worktree.sh`); its own design cycle.
+
+- **[2026-07-23] PR rejection feedback loop deferred.**
+  **Why:** Depends on review-comment parsing; no failure data yet.
+
+- **[2026-07-23] CI integration (`gh pr checks` polling) deferred.**
+  **Why:** Cheap in bash but a new failure mode; wants its own spec.
+
+- **[2026-07-23] Cost tracking / token budgets deferred.**
+  **Why:** The `claude` CLI does not surface per-invocation tokens to the shell.
+
+- **[2026-07-23] Adaptive retry policies deferred.**
+  **Why:** Needs historical success-rate data that does not exist until the pipeline runs at scale.
+
+- **[2026-07-23] Config-load-time schema validation deferred.**
+  **Why:** Wiring `validate_config_schema` into `reqdrive_load_config` would newly reject configs that load today (risking US-CFG-04/05 and minimal fixtures); `reqdrive validate` remains the validation entry point.
+
+- **[2026-07-23] The review agent is not a genuine writer≠grader.**
+  **Why:** Same model as the implementer, off by default, runs after PR creation so it cannot influence the draft decision. Making it real needs a distinct `reviewModel` and a pre-PR position.
+
 ## Roadmap
 
 > **Maintainers:** Check off items as completed. Add new items as they're identified.
@@ -185,12 +209,12 @@ archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
 - [x] Verification phase between implementation and PR creation — `lib/run.sh` Phase 3, generates `verification-summary.json`, runs final test suite, failed verification forces draft PR
 - [x] Enriched PR body with test results, iteration log summary, and verification data — `lib/pr-create.sh` reads `verification-summary.json`, adds Pipeline Verification table
 - [x] Per-iteration result tracking in `run.json` — `summary` field with tests/commits/stories counts via `RUN_SUMMARY_*` accumulators
-- [ ] Post-iteration scope checking (diff analysis to detect out-of-scope changes) — promote to hard gate, not just advisory (cf. Code Factory model)
-- [ ] `reqdrive verify <REQ-ID>` as standalone command
-- [ ] Heredoc structural fix — replace unquoted heredoc in `build_implementation_prompt` with quoted heredoc + explicit variable injection (`sed`/`envsubst`)
+- [x] Post-iteration scope checking (diff analysis to detect out-of-scope changes) — `policy_scope_check()` in `lib/policy.sh:54`, called from `lib/run.sh:1089`; hard gate, not advisory
+- [x] `reqdrive verify <REQ-ID>` as standalone command — `cmd_verify()` in `bin/reqdrive:440`
+- [x] Heredoc structural fix — `build_implementation_prompt` (`lib/run.sh:324`) now uses a quoted heredoc (`<<'PROMPT_IMPL'`) with explicit `@@TOKEN@@` substitution instead of shell expansion
 - [x] Post-PR review agent step — `run_review_phase()` in `lib/run.sh`, `update_pr_with_review()` in `lib/pr-create.sh`. Configurable via `reviewCommand` (`"builtin"` for Claude review, or external command). Findings appended to PR body.
-- [ ] Risk tiers by path — define high/medium/low risk paths in `reqdrive.json` (e.g., auth, payments, config). High-risk paths require stricter evidence (test coverage, explicit story reference).
-- [ ] Contract/policy definition file — extend `reqdrive.json` or add `.reqdrive/policy.json` defining evidence requirements, risk tiers, docs drift rules, and review policy per tier.
+- [x] Risk tiers by path — `policy_tier_for_path()` in `lib/policy.sh:12`, path-prefix classification (high/medium/low/none) driven by the `policy` block in config
+- [x] Contract/policy definition file — `lib/config.sh:87-89` loads `reqdrive.json`'s `.policy` object into `REQDRIVE_POLICY_JSON`/`REQDRIVE_POLICY_SCOPE_CHECK`, defining risk tiers and scope-check mode consumed by `lib/policy.sh`, `lib/run.sh`, and `lib/pr-create.sh`
 
 ### Tier 3 — Build Eventually (full vision)
 
@@ -243,9 +267,9 @@ Tests cover: config loading, schema validation, sanitization, error codes, prefl
 
 - **Heredoc quoting in implementation prompts.** `build_implementation_prompt` (`lib/run.sh:274`) uses an unquoted heredoc (`<<PROMPT_IMPL`) so `${story_id}` etc. expand. This means shell metacharacters in PRD-derived content can cause expansion bugs. `sanitize_for_prompt` escapes `$` and backticks, but the structural risk remains. The planning prompt (`lib/run.sh:187`) uses a quoted heredoc (`<<'PROMPT_PLAN'`) because it has no variables — this is the safe pattern. The fix (Tier 2) is to use quoted heredocs everywhere and inject variables via `sed`.
 
-- **`testCommand` is warn-only.** `testCommand` is auto-detected during `init` and now executed after each implementation iteration (`lib/run.sh:813-821`), but failures only produce warnings — they don't abort or retry. This is intentional (observe before enforce). Treat test failures in `iteration-N.test.log` as signals requiring human review until the verification phase is built.
+- **`testCommand` is warn-only per iteration.** `testCommand` is auto-detected during `init` and executed after each implementation iteration (`lib/run.sh:813-821`), but per-iteration failures only produce warnings — they don't abort or retry that iteration. This is intentional (observe before enforce). However, the final result is no longer purely advisory: the Phase 3 draft-PR gate (`lib/run.sh:1176-1190`) is fail-closed and requires `testCommand` to have positively passed (not merely run) before it will open a non-draft PR. Treat per-iteration failures in `iteration-N.test.log` as signals requiring human review; treat the pipeline's final draft/ready decision as trustworthy.
 
-- **Agent self-reporting is not authoritative.** The pipeline trusts the agent's `passes: true` markers in `prd.json` and iteration summary self-reports. The agent can (and sometimes does) mark stories complete without tests passing. Until the Tier 2 verification phase exists, treat agent self-reports as advisory. The post-iteration commit check (`lib/run.sh:824-828`) provides a minimal independent signal.
+- **Agent self-reporting is not authoritative — and the pipeline no longer trusts it alone.** The agent still writes `passes: true` markers in `prd.json` and iteration summary self-reports, and it can (and sometimes does) mark stories complete without tests passing. But the Phase 3 draft-PR gate (`lib/run.sh:1176-1190`) is fail-closed: it drafts unless `prd.json` is present, zero stories remain incomplete, *and* `testCommand` positively passed — `passes: true` alone no longer opens a non-draft PR. The post-iteration commit check (`lib/run.sh:824-828`) remains a minimal independent signal at the per-iteration level.
 
 - **Platform differences (MSYS2/WSL/Linux).** The user runs reqdrive on Windows (MSYS2/Git Bash), WSL, and Linux VPS. Known issues: `nohup` behavior varies in MSYS2 (process tracking less reliable), `realpath` may not exist (used in `sanitize.sh:123`), `date -Iseconds` format varies across platforms, signal trapping (INT/TERM/HUP) is less reliable under MSYS2. The test suite runs on all platforms without platform-conditional logic.
 
