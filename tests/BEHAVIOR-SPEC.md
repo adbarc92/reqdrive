@@ -905,7 +905,34 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 
 **As** the maintainer preparing to rewrite `build_implementation_prompt`'s unquoted heredoc,
 **When** the function is called with the fixed fixture `tests/fixtures/golden-story.json` (id `US-042`, a title/description/criteria containing `&`, `\`, a backtick, `$`, and a literal `@@STORY_ID@@` placeholder) and requirement content `Requirement body with & and $VAR`,
-**Then** the generated prompt is byte-identical to `tests/fixtures/golden-impl-prompt.md` — this characterization test locks the current output (including its known stray-backslash-before-`$` escaping defect) so a future heredoc rewrite can be verified byte-identical against this oracle before any deliberate behavior change is made.
+**Then** the generated prompt is byte-identical to `tests/fixtures/golden-impl-prompt.md` — this characterization test locks the current output, including the forgery-strip guard that turns the fixture's literal `@@STORY_ID@@` into inert text `STORY_ID`, so a future heredoc rewrite can be verified byte-identical against this oracle before any further deliberate behavior change is made.
+
+---
+
+### US-RUN-33: build_implementation_prompt — the patsub_replacement shopt guard survives bash without that option
+**Test:** `prompt: shopt guard tolerates bash without patsub_replacement`
+
+**As** the maintainer running the pipeline on a pre-5.2 bash where `patsub_replacement` does not exist,
+**When** `shopt -u definitely_not_an_option 2>/dev/null || true` is executed under `set -e` (standing in for an unknown shopt name), and separately, `lib/run.sh` is checked for the literal guard line,
+**Then** the unknown-option case does not abort the script (`SURVIVED` is printed) and `lib/run.sh` contains `shopt -u patsub_replacement 2>/dev/null || true` — pinning both the general `|| true` idiom and the exact guard line `build_implementation_prompt` relies on to stay portable across bash versions.
+
+---
+
+### US-RUN-34: build_implementation_prompt — PRD content cannot forge a placeholder token
+**Test:** `prompt: PRD content cannot forge a placeholder token`
+
+**As** the maintainer defending against prompt-injection via the PRD,
+**When** `build_implementation_prompt` is called with a story titled `@@STORY_ID@@ and @@REQUIREMENT@@` and requirement content `body text`,
+**Then** the rendered prompt contains no `@@` sequence anywhere and still contains the literal text `body text` — the forgery-strip guard removes `@@` from every injected value before substitution, so a PRD-supplied value cannot masquerade as a placeholder that a later substitution pass would expand.
+
+---
+
+### US-RUN-35: build_implementation_prompt — an ampersand in a title is not expanded to the match
+**Test:** `prompt: ampersand in a title is not expanded to the match`
+
+**As** the maintainer relying on bash's `${var//pat/repl}` substitution semantics,
+**When** `build_implementation_prompt` is called with a story titled `auth & billing`,
+**Then** the rendered prompt contains the line `**Title:** auth & billing` verbatim — the unquoted `&`-expands-to-match behavior (default before bash 5.2, or without the `patsub_replacement` guard) does not corrupt injected PRD content.
 
 ---
 

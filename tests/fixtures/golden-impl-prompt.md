@@ -6,7 +6,7 @@ You are an autonomous coding agent. Implement the following user story.
 
 - **ID:** US-042
 - **Title:** Handle auth & billing \$HOME with 'id' and a \ backslash
-- **Description:** Covers @@STORY_ID@@ forgery, ampersands & escapes, and \${VAR} expansion
+- **Description:** Covers STORY_ID forgery, ampersands & escapes, and \${VAR} expansion
 
 ### Acceptance Criteria
 

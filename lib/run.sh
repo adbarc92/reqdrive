@@ -299,6 +299,14 @@ build_implementation_prompt() {
   story_description=$(sanitize_for_prompt "$story_description")
   story_criteria=$(sanitize_for_prompt "$story_criteria")
 
+  # Strip @@-delimited tokens from PRD-derived values so injected content
+  # cannot forge a placeholder that a later substitution pass would expand.
+  story_id="${story_id//@@/}"
+  story_title="${story_title//@@/}"
+  story_description="${story_description//@@/}"
+  story_criteria="${story_criteria//@@/}"
+  sanitized_content="${sanitized_content//@@/}"
+
   local tpl
   tpl=$(cat <<'PROMPT_IMPL'
 # Agent Instructions: Implement Story @@STORY_ID@@

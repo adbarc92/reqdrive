@@ -1843,6 +1843,55 @@ test_result "prompt: build_planning_prompt preserves dollar signs in content" $?
 )
 test_result "prompt: implementation prompt matches golden file" $?
 
+# Test: shopt guard tolerates bash without patsub_replacement
+(
+  set -e
+  out=$(bash -c 'set -e; shopt -u definitely_not_an_option 2>/dev/null || true; echo SURVIVED')
+  [ "$out" = "SURVIVED" ] &&
+  grep -q 'shopt -u patsub_replacement 2>/dev/null || true' "$REQDRIVE_ROOT/lib/run.sh"
+)
+test_result "prompt: shopt guard tolerates bash without patsub_replacement" $?
+
+# Test: PRD content cannot forge a placeholder token
+(
+  set -e
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  out="$TEST_TEMP/prompt-forge.md"
+  story_json='{"title":"@@STORY_ID@@ and @@REQUIREMENT@@","description":"desc","acceptanceCriteria":["done"],"id":"US-004","priority":1,"passes":false}'
+  build_implementation_prompt "$out" "US-004" "$story_json" "body text"
+
+  if grep -q '@@' "$out"; then
+    echo "unexpected: @@ token survived into rendered prompt" >&2
+    exit 1
+  fi
+  grep -q "body text" "$out"
+)
+test_result "prompt: PRD content cannot forge a placeholder token" $?
+
+# Test: ampersand in a title is not expanded to the match
+(
+  set -e
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  out="$TEST_TEMP/prompt-amp.md"
+  story_json='{"title":"auth & billing","description":"desc","acceptanceCriteria":["done"],"id":"US-005","priority":1,"passes":false}'
+  build_implementation_prompt "$out" "US-005" "$story_json" "body text"
+
+  grep -q '\*\*Title:\*\* auth & billing' "$out"
+)
+test_result "prompt: ampersand in a title is not expanded to the match" $?
+
 echo ""
 echo "--- Completion Hook ---"
 
