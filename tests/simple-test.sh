@@ -2604,6 +2604,25 @@ test_result "preflight: silent when testCommand is configured" $?
 test_result "pr: body states why verification was not run" $?
 
 echo ""
+echo "--- Doc Coverage ---"
+
+# Test: every dispatch command appears in README
+(
+  set -e
+  cmds=$(awk '/^case "\$\{1:-\}" in$/,/^esac$/' "$REQDRIVE_ROOT/bin/reqdrive" \
+    | sed 's/^[[:space:]]*//' \
+    | grep -E '^[a-z][a-z-]*\)$' \
+    | tr -d ')')
+  [ -n "$cmds" ]
+  missing=""
+  for c in $cmds; do
+    grep -q "reqdrive $c" "$REQDRIVE_ROOT/README.md" || missing="$missing $c"
+  done
+  [ -z "$missing" ] || { echo "undocumented commands:$missing" >&2; false; }
+)
+test_result "docs: every CLI command is documented in README" $?
+
+echo ""
 echo "--- Harness Safety ---"
 
 # Test: suite refuses to run when mktemp fails

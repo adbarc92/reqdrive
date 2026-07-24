@@ -1223,3 +1223,12 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a maintainer relying on the draft-PR gate as a safety net,
 **When** `prd.json` exists, every story has `passes: true`, and `testCommand` runs and passes (`verification_passed` is the literal string `"true"`),
 **Then** `gh pr create` is invoked without `--draft` — proving the fix does not simply force every PR to draft unconditionally.
+
+## Module 14: doc coverage
+
+### US-DOC-01: Every dispatch command is documented in README
+**Test:** `docs: every CLI command is documented in README`
+
+**As** a maintainer relying on the README as the source of truth for the CLI surface,
+**When** the dispatch `case` block in `bin/reqdrive` is parsed for command labels (excluding `-v|--version`, `-h|--help|""`, and `*`),
+**Then** every remaining command appears in `README.md` — so adding a new dispatch command without documenting it fails the suite.

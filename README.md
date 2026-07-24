@@ -52,6 +52,8 @@ reqdrive run REQ-01   # Run pipeline for a requirement
 | `reqdrive logs <REQ-ID>` | Tail output log for a background run |
 | `reqdrive validate` | Validate the configuration file |
 | `reqdrive migrate` | Add version fields to pre-0.3.0 configs/PRDs |
+| `reqdrive plan <REQ-ID>` | Generate `prd.json` only — planning phase without implementation. Useful for reviewing the plan before committing agent time. |
+| `reqdrive orchestrate` | Multi-requirement sequencing. **Not implemented** — prints a "coming soon" notice and exits 0. |
 | `reqdrive --version` | Show version |
 | `reqdrive --help` | Show help |
 
