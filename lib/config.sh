@@ -86,6 +86,9 @@ reqdrive_load_config() {
   # Optional: evidence policy (risk tiers, scope-check mode)
   REQDRIVE_POLICY_JSON=$(jq -c '.policy // {}' "$manifest")
   REQDRIVE_POLICY_SCOPE_CHECK=$(jq -r '.policy.scopeCheck // "warn"' "$manifest")
+  # Strip a trailing CR (native Windows jq emits CRLF): a surviving CR would make
+  # [ "$mode" = "block" ] false and silently downgrade the hard gate to warn.
+  REQDRIVE_POLICY_SCOPE_CHECK="${REQDRIVE_POLICY_SCOPE_CHECK%$'\r'}"
   export REQDRIVE_POLICY_JSON REQDRIVE_POLICY_SCOPE_CHECK
 }
 

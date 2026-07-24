@@ -9,6 +9,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUITE="$SCRIPT_DIR/simple-test.sh"
 GATE="$SCRIPT_DIR/oracle-gate.sh"
+# The suite sources pipeline-harness.sh at enforce time, so its content decides
+# test outcomes and MUST be frozen too — otherwise it can be gutted toward
+# fake-success (ph_run(){ echo 0; } + a canned gh log) with the hash unchanged.
+# spec-map.sh gates lock generation; freeze it so the map cannot be silently
+# weakened before an --accept.
+HARNESS="$SCRIPT_DIR/lib/pipeline-harness.sh"
+SPECMAP="$SCRIPT_DIR/spec-map.sh"
 LOCK="$SCRIPT_DIR/oracle.lock.json"
 MODE="${1:-enforce}"
 
@@ -51,6 +58,8 @@ if [ "$MODE" = "--accept" ]; then
   jq -Rn \
     --arg suite "$(hash_file "$SUITE")" \
     --arg gate "$(hash_file "$GATE")" \
+    --arg harness "$(hash_file "$HARNESS")" \
+    --arg specmap "$(hash_file "$SPECMAP")" \
     --arg generated "$(date +%Y-%m-%d)" \
     --arg claude "$(command -v claude >/dev/null && echo true || echo false)" \
     --rawfile map "$WORK/map.tsv" '
@@ -60,6 +69,8 @@ if [ "$MODE" = "--accept" ]; then
       environment: { claude: ($claude == "true") },
       suiteSha256: $suite,
       gateSha256: $gate,
+      harnessSha256: $harness,
+      specmapSha256: $specmap,
       tests: ($map | rtrimstr("\n") | split("\n") | map(
         (split("\t")) as $p | { name: $p[0], story: $p[1] }
       ))
@@ -106,13 +117,23 @@ VERDICT=0
 # ── R7: file integrity ──────────────────────────────────────────────────
 locked_suite=$(jq -r .suiteSha256 "$LOCK")
 locked_gate=$(jq -r .gateSha256 "$LOCK")
+locked_harness=$(jq -r '.harnessSha256 // ""' "$LOCK")
+locked_specmap=$(jq -r '.specmapSha256 // ""' "$LOCK")
 actual_suite=$(hash_file "$SUITE")
 actual_gate=$(hash_file "$GATE")
+actual_harness=$(hash_file "$HARNESS")
+actual_specmap=$(hash_file "$SPECMAP")
 if [ "$locked_suite" != "$actual_suite" ]; then
   fail R7 "NEEDS_HUMAN: tests/simple-test.sh changed (locked $locked_suite, actual $actual_suite). Review the diff, then re-lock with --accept."
 fi
 if [ "$locked_gate" != "$actual_gate" ]; then
   fail R7 "NEEDS_HUMAN: tests/oracle-gate.sh changed (locked $locked_gate, actual $actual_gate). Review the diff, then re-lock with --accept."
+fi
+if [ "$locked_harness" != "$actual_harness" ]; then
+  fail R7 "NEEDS_HUMAN: tests/lib/pipeline-harness.sh changed (locked $locked_harness, actual $actual_harness). Review the diff, then re-lock with --accept."
+fi
+if [ "$locked_specmap" != "$actual_specmap" ]; then
+  fail R7 "NEEDS_HUMAN: tests/spec-map.sh changed (locked $locked_specmap, actual $actual_specmap). Review the diff, then re-lock with --accept."
 fi
 
 # ── R2: a locked test reported FAIL ─────────────────────────────────────
