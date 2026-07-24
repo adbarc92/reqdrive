@@ -19,6 +19,7 @@ policy_tier_for_path() {
   for tier in high medium low; do
     while IFS= read -r pattern; do
       pattern="${pattern%$'\r'}"  # native jq.exe on Windows/MSYS emits CRLF
+      pattern="${pattern%/}"      # normalize a trailing slash ("src/auth/" == "src/auth")
       [ -n "$pattern" ] || continue
       if [ "$path" = "$pattern" ] || [ "${path#"$pattern"/}" != "$path" ]; then
         printf '%s\n' "$tier"
@@ -55,6 +56,10 @@ policy_scope_check() {
   local mode="${REQDRIVE_POLICY_SCOPE_CHECK:-warn}"
   local findings_file="$agent_dir/scope-findings.txt"
 
+  # HEAD~1 always resolves here: preflight's check_base_branch_exists requires
+  # baseBranch to exist (>= 1 commit) and the work branch is cut from it, so by
+  # the first iteration's commit the repo has >= 2 commits. If that invariant is
+  # ever weakened, this fails open (no diff -> no finding) rather than erroring.
   local changed
   changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
   [ -n "$changed" ] || return 0

@@ -1482,6 +1482,13 @@ matcher Task 34's scope check consumes.
 **When** `REQDRIVE_POLICY_JSON` is `{}`,
 **Then** `policy_tier_for_path` returns `none` for every path, so the absence of policy configuration is safe by default rather than an error.
 
+### US-POL-09: A trailing-slash pattern is normalized
+**Test:** `policy: a trailing-slash pattern is normalized`
+
+**As** a maintainer who writes a directory pattern with a trailing slash,
+**When** a risk tier lists `"src/auth/"`,
+**Then** it matches `src/auth/login.ts` and `src/auth` (tier `high`) but not the sibling `src/auth.sh` — the trailing slash is stripped so a natural directory-style pattern is not silently inert.
+
 ## Module 18: scope check (lib/policy.sh + lib/run.sh)
 
 `policy_scope_check <agent_dir> <iteration> <tests_passed>` runs after every

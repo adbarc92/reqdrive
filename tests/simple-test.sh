@@ -3155,6 +3155,17 @@ test_result "policy: matcher classifies paths by tier" $?
 )
 test_result "policy: a prefix-sharing sibling does not match" $?
 
+# Test: a trailing-slash pattern is normalized (src/auth/ behaves as src/auth)
+(
+  set -e
+  export REQDRIVE_POLICY_JSON='{"riskTiers":{"high":["src/auth/"]}}'
+  source "$REQDRIVE_ROOT/lib/policy.sh"
+  [ "$(policy_tier_for_path 'src/auth/login.ts')" = "high" ]
+  [ "$(policy_tier_for_path 'src/auth')" = "high" ]
+  [ "$(policy_tier_for_path 'src/auth.sh')" = "none" ]
+)
+test_result "policy: a trailing-slash pattern is normalized" $?
+
 # Test: highest tier wins when a path matches two
 (
   set -e
