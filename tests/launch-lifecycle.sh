@@ -34,9 +34,26 @@ test_result() {
 
 TEST_TEMP=$(mktemp -d) || { echo "FATAL: mktemp failed" >&2; exit 1; }
 LAUNCH_PID=""
+
+# Kill the full process tree rooted at $1, not just the top PID. `reqdrive
+# launch` backgrounds with plain `nohup ... &` (no setsid), so the detached
+# run shares this script's process group — a pgid-based `kill -- -PGID`
+# would risk taking out the test script itself. Walk descendants by PPID
+# instead: timeout/claude/tee (and anything claude forks, e.g. the fake
+# claude's `cat`/`sleep`) are children/grandchildren of $LAUNCH_PID that a
+# plain `kill -9 "$LAUNCH_PID"` leaves behind to reparent to PID 1.
+kill_tree() {
+  local pid="$1"
+  local child
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_tree "$child"
+  done
+  kill -9 "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   if [ -n "$LAUNCH_PID" ]; then
-    kill -9 "$LAUNCH_PID" 2>/dev/null || true
+    kill_tree "$LAUNCH_PID"
   fi
   rm -rf "$TEST_TEMP"
 }
@@ -140,7 +157,7 @@ dup_rc=$?
 test_result "launch: duplicate launch is refused while the run is alive" $?
 
 # ── Case 6: kill -9 the process, status reports crashed ─────────────────────
-kill -9 "$LAUNCH_PID" 2>/dev/null
+kill_tree "$LAUNCH_PID"
 
 waited=0
 while kill -0 "$LAUNCH_PID" 2>/dev/null && [ "$waited" -lt 100 ]; do

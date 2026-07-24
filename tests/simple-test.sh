@@ -2650,9 +2650,10 @@ test_result "docs: every config field is documented in README" $?
 # Test: every accepted CLI flag is documented in README
 (
   set -e
-  flags=$(sed -n '90,130p;395,425p' "$REQDRIVE_ROOT/bin/reqdrive" \
+  # Whole-file scan for flag case-labels (not a hardcoded line window) so
+  # this test reddens if a --flag) case moves outside any fixed range.
+  flags=$(grep -E '^[[:space:]]*(-[a-z]\|)?--[a-z-]+(\|--[a-z-]+)*\)$' "$REQDRIVE_ROOT/bin/reqdrive" \
     | sed 's/^[[:space:]]*//' \
-    | grep -E '^(-[a-z]\|)?--[a-z-]+(\|--[a-z-]+)*\)$' \
     | tr -d ')' | tr '|' '\n' \
     | grep -E '^--' | sort -u)
   [ -n "$flags" ]
