@@ -2727,6 +2727,85 @@ test_result "preflight: silent when testCommand is configured" $?
 test_result "pr: body states why verification was not run" $?
 
 echo ""
+echo "--- Verify Command ---"
+
+# Test: verify re-runs verification and preserves the evidence trail
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/v-merge"
+  jq '.testCommand = "true"' "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.t" && mv "$PH_ROOT/r.t" "$PH_ROOT/reqdrive.json"
+  git -C "$PH_ROOT" add -A && git -C "$PH_ROOT" commit -q -m "chore: testCommand"
+  ph_fake_claude full
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  s="$PH_ROOT/.reqdrive/runs/req-01/verification-summary.json"
+  before_iters=$(jq '.iterations.run' "$s")
+  before_commits=$(jq '.commits.verified' "$s")
+  (cd "$PH_ROOT" && PATH="$PH_BIN:$PATH" "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-01)
+  [ "$(jq '.iterations.run' "$s")" = "$before_iters" ]
+  [ "$(jq '.commits.verified' "$s")" = "$before_commits" ]
+)
+test_result "verify: merge mode preserves the evidence trail" $?
+
+# Test: verify exits 9 when the test command fails
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/v-fail"
+  jq '.testCommand = "true"' "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.t" && mv "$PH_ROOT/r.t" "$PH_ROOT/reqdrive.json"
+  git -C "$PH_ROOT" add -A && git -C "$PH_ROOT" commit -q -m "chore: testCommand"
+  ph_fake_claude full
+  ph_fake_gh
+  ph_run REQ-01 > /dev/null
+  jq '.testCommand = "false"' "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.t" && mv "$PH_ROOT/r.t" "$PH_ROOT/reqdrive.json"
+  rc=0
+  (cd "$PH_ROOT" && PATH="$PH_BIN:$PATH" "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-01) || rc=$?
+  [ "$rc" -eq 9 ]
+)
+test_result "verify: exits 9 when verification fails" $?
+
+# Test: verify exits 3 for an unknown REQ-ID
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/v-unknown"
+  rc=0
+  out=$(cd "$PH_ROOT" && "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-99 2>&1) || rc=$?
+  [ "$rc" -eq 3 ]
+  echo "$out" | grep -qi "req-99"
+)
+test_result "verify: exits 3 for an unknown REQ-ID" $?
+
+# Test: verify refuses while the run's PID is alive
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/v-live"
+  run_dir="$PH_ROOT/.reqdrive/runs/req-01"
+  mkdir -p "$run_dir"
+  echo '{"version":"0.3.0"}' > "$run_dir/verification-summary.json"
+  cat > "$run_dir/run.json" <<EOF
+{"version":"0.3.0","req_id":"REQ-01","status":"running","pid":$$,"iteration":1}
+EOF
+  rc=0
+  (cd "$PH_ROOT" && "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-01 >/dev/null 2>&1) || rc=$?
+  [ "$rc" -eq 10 ]
+)
+test_result "verify: exits 10 while the run PID is alive" $?
+
+# Test: new exit codes exist with messages
+(
+  set -e
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  [ "$EXIT_VERIFICATION_FAILED" -eq 9 ]
+  [ "$EXIT_CONCURRENT_RUN" -eq 10 ]
+  [ -n "$(get_exit_message 9)" ] && [ "$(get_exit_message 9)" != "Unknown error" ]
+  [ -n "$(get_exit_message 10)" ] && [ "$(get_exit_message 10)" != "Unknown error" ]
+)
+test_result "errors: verification and concurrency codes are defined" $?
+
+echo ""
 echo "--- Doc Coverage ---"
 
 # Test: every dispatch command appears in README

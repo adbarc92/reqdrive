@@ -70,6 +70,13 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** the previous command failed (`$?` is non-zero) and I call `die_on_error "it broke"`,
 **Then** the process exits with code 1 and prints the message including "it broke" to stderr.
 
+### US-ERR-10: Verification and concurrency exit codes are defined
+**Test:** `errors: verification and concurrency codes are defined`
+
+**As** a maintainer wiring `reqdrive verify` into the exit-code contract,
+**When** `lib/errors.sh` is sourced,
+**Then** `EXIT_VERIFICATION_FAILED` is `9` and `EXIT_CONCURRENT_RUN` is `10`, and `get_exit_message` returns a non-empty message other than "Unknown error" for both.
+
 ---
 
 ## Module 2: schema.sh
@@ -1039,6 +1046,34 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a CLI user,
 **When** I run `reqdrive orchestrate`,
 **Then** the output contains the case-insensitive phrase `coming soon`.
+
+### US-CLI-14: verify re-runs verification and preserves the evidence trail
+**Test:** `verify: merge mode preserves the evidence trail`
+
+**As** an operator re-verifying a completed run,
+**When** I run `reqdrive verify REQ-01` against a run whose `verification-summary.json` already records `iterations.run` and `commits.verified`,
+**Then** those two fields are unchanged afterward — merge mode refreshes the pass/fail verdict without zeroing the evidence trail `pr-create` renders into the PR table.
+
+### US-CLI-15: verify exits 9 when the re-run test command fails
+**Test:** `verify: exits 9 when verification fails`
+
+**As** an operator re-verifying a run whose `testCommand` now fails,
+**When** I run `reqdrive verify REQ-01` and the configured `testCommand` exits non-zero,
+**Then** the command exits `9` (`EXIT_VERIFICATION_FAILED`).
+
+### US-CLI-16: verify exits 3 for a REQ-ID with no run directory
+**Test:** `verify: exits 3 for an unknown REQ-ID`
+
+**As** an operator who mistyped a REQ-ID,
+**When** I run `reqdrive verify REQ-99` and no `.reqdrive/runs/req-99/` directory exists,
+**Then** the command exits `3` (`EXIT_CONFIG_ERROR`) and the error message names `req-99`.
+
+### US-CLI-17: verify refuses to run while the run's PID is alive
+**Test:** `verify: exits 10 while the run PID is alive`
+
+**As** an operator who might otherwise race a still-running pipeline,
+**When** I run `reqdrive verify REQ-01` and `run.json`'s recorded `pid` belongs to a live process,
+**Then** the command exits `10` (`EXIT_CONCURRENT_RUN`) instead of writing a concurrent `verification-summary.json`.
 
 ---
 

@@ -53,6 +53,7 @@ reqdrive run REQ-01   # Run pipeline for a requirement
 | `reqdrive validate` | Validate the configuration file |
 | `reqdrive migrate` | Add version fields to pre-0.3.0 configs/PRDs |
 | `reqdrive plan <REQ-ID>` | Generate `prd.json` only — planning phase without implementation. Useful for reviewing the plan before committing agent time. |
+| `reqdrive verify <REQ-ID>` | Re-run verification for an existing run and update its `verification-summary.json` in place. Exits 0 on pass, 9 on failure, 3 if the run or its summary is missing, 4 on branch mismatch, 10 while the run is still active. |
 | `reqdrive orchestrate` | Multi-requirement sequencing. **Not implemented** — prints a "coming soon" notice and exits 0. |
 | `reqdrive --version` | Show version |
 | `reqdrive --help` | Show help |
@@ -66,6 +67,7 @@ reqdrive run REQ-01   # Run pipeline for a requirement
 | `--dangerously-skip-permissions` | Alias for `--unsafe`. Accepted for parity with the `claude` CLI's own flag name. Grants the agent unrestricted system access; `launch` always uses this mode because a detached run cannot answer permission prompts. |
 | `--force` | Skip pre-flight checks |
 | `--resume` | Resume from last checkpoint |
+| `--ref <branch>` | `reqdrive verify` only. Verify against `<branch>` instead of refusing when the checkout does not match the run's recorded branch. Without it, verifying after the branch was merged and deleted would record an unrelated tree's result as that run's evidence. |
 
 ## Configuration (`reqdrive.json`)
 
