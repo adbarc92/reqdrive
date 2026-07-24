@@ -2362,6 +2362,32 @@ test_result "run_status: summary is null when accumulators not set" $?
 )
 test_result "run_status: run.json with summary is valid JSON" $?
 
+# Test: write_run_status JSON-escapes pr_url (F8 root cause fix) — a pr_url
+# containing a newline and a double-quote must not break run.json's JSON.
+(
+  set -e
+  mkdir -p "$TEST_TEMP/run-pr-escape"
+  export REQDRIVE_ROOT
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+
+  weird_url=$'https://x/pull/1\n"evil'
+  write_run_status "$TEST_TEMP/run-pr-escape" "completed" "REQ-01" "1" "0" "$weird_url"
+
+  jq -e . "$TEST_TEMP/run-pr-escape/run.json" > /dev/null
+
+  # tr -d '\r': on Windows, jq's own -r output translates an embedded LF to
+  # CRLF when piped through git-bash; strip it symmetrically so this checks
+  # content round-tripping, not that platform artifact.
+  round_tripped=$(jq -r '.pr_url' "$TEST_TEMP/run-pr-escape/run.json" | tr -d '\r')
+  expected=$(printf '%s' "$weird_url" | tr -d '\r')
+  [ "$round_tripped" = "$expected" ]
+)
+test_result "run_status: pr_url with special chars stays valid JSON" $?
+
 # Test: PR body includes verification section when verification-summary.json exists
 (
   set -e
@@ -2739,6 +2765,11 @@ echo "--- Verify Command ---"
   ph_fake_claude full
   ph_fake_gh
   ph_run REQ-01 > /dev/null
+  # A completed run's process is dead. In the harness run.json's pid is $$
+  # (the test runner, still alive), so mark it dead to reflect reality and
+  # let verify past its concurrency guard.
+  rj="$PH_ROOT/.reqdrive/runs/req-01/run.json"
+  jq '.pid = 999999' "$rj" > "$rj.t" && mv "$rj.t" "$rj"
   s="$PH_ROOT/.reqdrive/runs/req-01/verification-summary.json"
   before_iters=$(jq '.iterations.run' "$s")
   before_commits=$(jq '.commits.verified' "$s")
@@ -2759,6 +2790,10 @@ test_result "verify: merge mode preserves the evidence trail" $?
   ph_fake_gh
   ph_run REQ-01 > /dev/null
   jq '.testCommand = "false"' "$PH_ROOT/reqdrive.json" > "$PH_ROOT/r.t" && mv "$PH_ROOT/r.t" "$PH_ROOT/reqdrive.json"
+  # A completed run's process is dead; the harness leaves run.json's pid as
+  # $$ (the live test runner), so mark it dead to reflect reality.
+  rj="$PH_ROOT/.reqdrive/runs/req-01/run.json"
+  jq '.pid = 999999' "$rj" > "$rj.t" && mv "$rj.t" "$rj"
   rc=0
   (cd "$PH_ROOT" && PATH="$PH_BIN:$PATH" "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-01) || rc=$?
   [ "$rc" -eq 9 ]
@@ -2793,6 +2828,42 @@ EOF
   [ "$rc" -eq 10 ]
 )
 test_result "verify: exits 10 while the run PID is alive" $?
+
+# Test: verify refuses a run with no checkpoint when no --ref given
+# (without this, an empty-stories/maxIterations=0 run never writes
+# checkpoint.json, and verify silently skipped the branch check entirely.)
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/v-nockpt"
+  run_dir="$PH_ROOT/.reqdrive/runs/req-01"
+  mkdir -p "$run_dir"
+  echo '{"version":"0.3.0"}' > "$run_dir/verification-summary.json"
+  cat > "$run_dir/run.json" <<EOF
+{"version":"0.3.0","req_id":"REQ-01","status":"completed","pid":999999,"iteration":1}
+EOF
+  rc=0
+  (cd "$PH_ROOT" && "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-01 >/dev/null 2>&1) || rc=$?
+  [ "$rc" -eq 3 ]
+)
+test_result "verify: refuses a run with no checkpoint when no --ref given" $?
+
+# Test: verify exits 4 (not git's raw 1) when --ref names a nonexistent branch
+(
+  set -e
+  source "$REQDRIVE_ROOT/tests/lib/pipeline-harness.sh"
+  ph_setup "$TEST_TEMP/v-badref"
+  run_dir="$PH_ROOT/.reqdrive/runs/req-01"
+  mkdir -p "$run_dir"
+  echo '{"version":"0.3.0"}' > "$run_dir/verification-summary.json"
+  cat > "$run_dir/run.json" <<EOF
+{"version":"0.3.0","req_id":"REQ-01","status":"completed","pid":999999,"iteration":1}
+EOF
+  rc=0
+  (cd "$PH_ROOT" && "$REQDRIVE_ROOT/bin/reqdrive" verify REQ-01 --ref does-not-exist >/dev/null 2>&1) || rc=$?
+  [ "$rc" -eq 4 ]
+)
+test_result "verify: exits 4 when --ref names a nonexistent branch" $?
 
 # Test: new exit codes exist with messages
 (

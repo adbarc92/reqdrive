@@ -950,6 +950,13 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **When** `build_implementation_prompt` is called with a story titled `Fix $HOME handling`,
 **Then** the rendered prompt contains the line `**Title:** Fix $HOME handling` verbatim, contains no stray `\$` before `HOME`, and the commit-message line reads `feat: [US-9] - Fix $HOME handling` — `sanitize_for_prompt`'s `$` → `\$` escaping (still load-bearing for its other callers) is reversed at injection time so the agent never sees a backslash that was only ever needed for the old unquoted heredoc.
 
+### US-RUN-37: write_run_status — JSON-escapes pr_url (F8 root cause)
+**Test:** `run_status: pr_url with special chars stays valid JSON`
+
+**As** the maintainer closing out F8,
+**When** `write_run_status` is called with a `pr_url` containing an embedded newline and a double-quote,
+**Then** `run.json` still parses as valid JSON (`jq -e .` succeeds) and `.pr_url` round-trips the original value — `pr_url` is now interpolated via `jq -Rn --arg` instead of raw double-quoting, so raw `gh`/`git` stdout containing special characters can no longer corrupt `run.json` for every downstream `jq` consumer (`status`, `verify`'s pid guard).
+
 ---
 
 ## Module 6: bin/reqdrive (CLI)
@@ -1074,6 +1081,20 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** an operator who might otherwise race a still-running pipeline,
 **When** I run `reqdrive verify REQ-01` and `run.json`'s recorded `pid` belongs to a live process,
 **Then** the command exits `10` (`EXIT_CONCURRENT_RUN`) instead of writing a concurrent `verification-summary.json`.
+
+### US-CLI-18: verify refuses a run with no checkpoint when no --ref is given
+**Test:** `verify: refuses a run with no checkpoint when no --ref given`
+
+**As** an operator verifying a run whose Phase-2 loop never wrote a checkpoint (e.g. an empty `userStories` array or `maxIterations: 0`),
+**When** I run `reqdrive verify REQ-01` with no `--ref` and `checkpoint.json` is missing,
+**Then** the command exits `3` (`EXIT_CONFIG_ERROR`) instead of silently recording whatever branch happens to be checked out as that REQ-ID's evidence.
+
+### US-CLI-19: verify exits 4 when --ref names a nonexistent branch
+**Test:** `verify: exits 4 when --ref names a nonexistent branch`
+
+**As** an operator who mistyped a `--ref` branch name,
+**When** I run `reqdrive verify REQ-01 --ref does-not-exist` and that branch does not exist,
+**Then** the command exits `4` (`EXIT_GIT_ERROR`) — matching the README's documented exit code — instead of aborting with git's raw exit status `1` under `set -euo pipefail`.
 
 ---
 

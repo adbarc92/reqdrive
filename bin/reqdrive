@@ -516,7 +516,10 @@ cmd_verify() {
   # caller explicitly asked to verify against a different ref.
   if [ -n "$ref_branch" ]; then
     log_info "Checking out $ref_branch for verification (--ref)"
-    git -C "$REQDRIVE_PROJECT_ROOT" checkout "$ref_branch"
+    git -C "$REQDRIVE_PROJECT_ROOT" checkout "$ref_branch" 2>/dev/null || {
+      echo "ERROR: cannot check out ref '$ref_branch'" >&2
+      exit "$EXIT_GIT_ERROR"
+    }
   else
     local checkpoint_file="$agent_dir/checkpoint.json"
     if [ -f "$checkpoint_file" ]; then
@@ -528,6 +531,10 @@ cmd_verify() {
         echo "Pass --ref '$checkpoint_branch' to verify against it, or check it out yourself." >&2
         exit "$EXIT_GIT_ERROR"
       fi
+    else
+      echo "ERROR: No checkpoint.json for '$req_slug' — cannot validate the branch to verify against." >&2
+      echo "Pass --ref <branch> to verify explicitly." >&2
+      exit "$EXIT_CONFIG_ERROR"
     fi
   fi
 

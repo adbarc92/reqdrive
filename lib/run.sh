@@ -44,7 +44,9 @@ write_run_status() {
   local exit_code_json="$exit_code"
   [ "$exit_code" != "null" ] && exit_code_json="$exit_code"
   local pr_url_json="null"
-  [ "$pr_url" != "null" ] && [ -n "$pr_url" ] && pr_url_json="\"$pr_url\""
+  if [ "$pr_url" != "null" ] && [ -n "$pr_url" ]; then
+    pr_url_json=$(jq -Rn --arg u "$pr_url" '$u')
+  fi
 
   # Build summary block from accumulator variables (set during pipeline)
   local summary_json="null"
