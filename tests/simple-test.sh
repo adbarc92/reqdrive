@@ -2647,6 +2647,23 @@ test_result "docs: every CLI command is documented in README" $?
 )
 test_result "docs: every config field is documented in README" $?
 
+# Test: every accepted CLI flag is documented in README
+(
+  set -e
+  flags=$(sed -n '90,130p;395,425p' "$REQDRIVE_ROOT/bin/reqdrive" \
+    | sed 's/^[[:space:]]*//' \
+    | grep -E '^(-[a-z]\|)?--[a-z-]+(\|--[a-z-]+)*\)$' \
+    | tr -d ')' | tr '|' '\n' \
+    | grep -E '^--' | sort -u)
+  [ -n "$flags" ]
+  missing=""
+  for f in $flags; do
+    grep -q -- "$f" "$REQDRIVE_ROOT/README.md" || missing="$missing $f"
+  done
+  [ -z "$missing" ] || { echo "undocumented flags:$missing" >&2; false; }
+)
+test_result "docs: every CLI flag is documented in README" $?
+
 echo ""
 echo "--- Harness Safety ---"
 

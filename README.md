@@ -63,6 +63,7 @@ reqdrive run REQ-01   # Run pipeline for a requirement
 |------|-------------|
 | `-i`, `--interactive` | Run in interactive mode (default, safer) |
 | `--unsafe` | Skip permission prompts (`--dangerously-skip-permissions`) |
+| `--dangerously-skip-permissions` | Alias for `--unsafe`. Accepted for parity with the `claude` CLI's own flag name. Grants the agent unrestricted system access; `launch` always uses this mode because a detached run cannot answer permission prompts. |
 | `--force` | Skip pre-flight checks |
 | `--resume` | Resume from last checkpoint |
 

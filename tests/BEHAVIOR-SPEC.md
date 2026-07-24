@@ -1239,3 +1239,10 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 **As** a maintainer relying on the README as the source of truth for `reqdrive.json`,
 **When** every `REQDRIVE_[A-Z_]+` variable exported by `lib/config.sh` is collected, the three derived-path variables (`REQDRIVE_MANIFEST`, `REQDRIVE_PROJECT_ROOT`, `REQDRIVE_ROOT`) are exempted as not settable config fields, and each remaining variable's snake_case suffix is converted to its camelCase `reqdrive.json` field name (e.g. `MAX_STORY_RETRIES` -> `maxStoryRetries`),
 **Then** every derived field name appears in `README.md` — so adding a new config field without documenting it fails the suite.
+
+### US-DOC-03: Every accepted CLI flag is documented in README
+**Test:** `docs: every CLI flag is documented in README`
+
+**As** a maintainer relying on the README as the source of truth for the CLI's accepted flags,
+**When** the option-parsing `case` blocks in `bin/reqdrive` (the `run`/`launch` block and the `plan` block) are parsed for case labels matching `^(-[a-z]\|)?--[a-z-]+(\|--[a-z-]+)*\)$` and split on `|` — so free `--` literals inside strings, such as the `--help` inside the usage message `echo "Run 'reqdrive run --help' for usage."`, are not mistaken for flags,
+**Then** every extracted flag (`--interactive`, `--unsafe`, `--dangerously-skip-permissions`, `--force`, `--resume`) appears in `README.md` — so adding a new accepted flag, or an alias like `--dangerously-skip-permissions`, without documenting it fails the suite.
