@@ -900,6 +900,15 @@ Each story maps to one or more tests in `tests/simple-test.sh`.
 
 ---
 
+### US-RUN-32: build_implementation_prompt — matches the frozen golden file byte for byte
+**Test:** `prompt: implementation prompt matches golden file`
+
+**As** the maintainer preparing to rewrite `build_implementation_prompt`'s unquoted heredoc,
+**When** the function is called with the fixed fixture `tests/fixtures/golden-story.json` (id `US-042`, a title/description/criteria containing `&`, `\`, a backtick, `$`, and a literal `@@STORY_ID@@` placeholder) and requirement content `Requirement body with & and $VAR`,
+**Then** the generated prompt is byte-identical to `tests/fixtures/golden-impl-prompt.md` — this characterization test locks the current output (including its known stray-backslash-before-`$` escaping defect) so a future heredoc rewrite can be verified byte-identical against this oracle before any deliberate behavior change is made.
+
+---
+
 ## Module 6: bin/reqdrive (CLI)
 
 ### US-CLI-01: --version prints the schema version

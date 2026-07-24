@@ -1820,6 +1820,29 @@ test_result "prompt: build_planning_prompt includes PRD schema" $?
 )
 test_result "prompt: build_planning_prompt preserves dollar signs in content" $?
 
+# Test: implementation prompt matches the frozen golden file.
+# CR is normalized on both sides: native Windows jq emits internal join("\n")
+# as \r\n in text mode (see the tr -d '\r' note in oracle-gate.sh), so
+# build_implementation_prompt's criteria list carries a CR on Windows and none
+# on Linux. That line-ending artifact is not semantic; the golden is canonical
+# LF and both sides are CR-stripped before the diff.
+(
+  set -e
+  source "$REQDRIVE_ROOT/lib/errors.sh"
+  source "$REQDRIVE_ROOT/lib/sanitize.sh"
+  source "$REQDRIVE_ROOT/lib/schema.sh"
+  source "$REQDRIVE_ROOT/lib/preflight.sh"
+  source "$REQDRIVE_ROOT/lib/run.sh" 2>/dev/null || true
+  out="$TEST_TEMP/golden-check.md"
+  build_implementation_prompt "$out" "US-042" \
+    "$(cat "$REQDRIVE_ROOT/tests/fixtures/golden-story.json")" \
+    'Requirement body with & and $VAR'
+  tr -d '\r' < "$REQDRIVE_ROOT/tests/fixtures/golden-impl-prompt.md" > "$TEST_TEMP/golden-norm.md"
+  tr -d '\r' < "$out" > "$TEST_TEMP/golden-check-norm.md"
+  diff -u "$TEST_TEMP/golden-norm.md" "$TEST_TEMP/golden-check-norm.md"
+)
+test_result "prompt: implementation prompt matches golden file" $?
+
 echo ""
 echo "--- Completion Hook ---"
 

@@ -1,0 +1,11 @@
+{
+  "id": "US-042",
+  "title": "Handle auth & billing $HOME with `id` and a \\ backslash",
+  "description": "Covers @@STORY_ID@@ forgery, ampersands & escapes, and ${VAR} expansion",
+  "acceptanceCriteria": [
+    "Given input with & and \\, the output is unchanged",
+    "Check ${HOME} is not expanded"
+  ],
+  "priority": 1,
+  "passes": false
+}
