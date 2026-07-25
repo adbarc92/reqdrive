@@ -13,6 +13,8 @@ export EXIT_AGENT_ERROR=5
 export EXIT_PR_ERROR=6
 export EXIT_USER_ABORT=7
 export EXIT_PREFLIGHT_FAILED=8
+export EXIT_VERIFICATION_FAILED=9
+export EXIT_CONCURRENT_RUN=10
 
 # ── Error Messages ───────────────────────────────────────────────────────────
 
@@ -26,6 +28,8 @@ declare -A EXIT_MESSAGES=(
   [6]="PR creation failed"
   [7]="User aborted operation"
   [8]="Pre-flight checks failed"
+  [9]="Verification failed"
+  [10]="Another reqdrive run is active"
 )
 
 # ── Helper Functions ─────────────────────────────────────────────────────────

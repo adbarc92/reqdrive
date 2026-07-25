@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # validate.sh - Validate reqdrive.json config
+# shellcheck disable=SC1091
 
 set -e
+
+# Source errors if not already loaded
+if [ -z "$EXIT_CONFIG_ERROR" ]; then
+  source "${REQDRIVE_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/errors.sh"
+fi
 
 M="$REQDRIVE_MANIFEST"
 ROOT="$REQDRIVE_PROJECT_ROOT"
@@ -13,7 +19,7 @@ echo "────────────────────────�
 # ── JSON syntax and schema ────────────────────────────────────────────
 if ! jq empty "$M" 2>/dev/null; then
   echo "FAIL: Invalid JSON syntax"
-  exit 1
+  exit "$EXIT_CONFIG_ERROR"
 fi
 echo "  ✓ Valid JSON"
 
@@ -23,7 +29,7 @@ if ! validate_config_schema "$M" 2>/dev/null; then
   # Re-run to show errors
   validate_config_schema "$M" 2>&1 | while IFS= read -r line; do
     echo "  $line"
-  done
+  done || true
   ERRORS=$((ERRORS + 1))
 else
   echo "  ✓ Schema valid"
@@ -67,5 +73,5 @@ if [ "$ERRORS" -eq 0 ]; then
   exit 0
 else
   echo "Validation FAILED ($ERRORS errors)"
-  exit 1
+  exit "$EXIT_CONFIG_ERROR"
 fi

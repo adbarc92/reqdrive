@@ -44,7 +44,9 @@ write_run_status() {
   local exit_code_json="$exit_code"
   [ "$exit_code" != "null" ] && exit_code_json="$exit_code"
   local pr_url_json="null"
-  [ "$pr_url" != "null" ] && [ -n "$pr_url" ] && pr_url_json="\"$pr_url\""
+  if [ "$pr_url" != "null" ] && [ -n "$pr_url" ]; then
+    pr_url_json=$(jq -Rn --arg u "$pr_url" '$u')
+  fi
 
   # Build summary block from accumulator variables (set during pipeline)
   local summary_json="null"
@@ -282,70 +284,94 @@ build_implementation_prompt() {
   local story_json="$3"
   local sanitized_content="$4"
 
+  # Pin replacement semantics: bash >= 5.2 expands & in a //-replacement to
+  # the matched text. The option does not exist before 5.2 and shopt -u
+  # returns 1 on an unknown option, which set -e would turn into an abort.
+  shopt -u patsub_replacement 2>/dev/null || true
+
   local story_title story_description story_criteria
   story_title=$(echo "$story_json" | jq -r '.title')
   story_description=$(echo "$story_json" | jq -r '.description')
   story_criteria=$(echo "$story_json" | jq -r '.acceptanceCriteria | map("- " + .) | join("\n")')
 
-  # Sanitize PRD-derived fields before heredoc expansion.
-  # The unquoted heredoc below expands $vars and $(cmds), so any
-  # attacker-controlled content from the PRD must be escaped first.
+  # Sanitize PRD-derived fields. The heredoc below is quoted, so this is no
+  # longer shell-escaping — it is prompt-injection defence (backticks).
   story_id=$(sanitize_for_prompt "$story_id")
   story_title=$(sanitize_for_prompt "$story_title")
   story_description=$(sanitize_for_prompt "$story_description")
   story_criteria=$(sanitize_for_prompt "$story_criteria")
 
-  cat > "$prompt_file" <<PROMPT_IMPL
-# Agent Instructions: Implement Story ${story_id}
+  # Strip @@-delimited tokens from PRD-derived values so injected content
+  # cannot forge a placeholder that a later substitution pass would expand.
+  story_id="${story_id//@@/}"
+  story_title="${story_title//@@/}"
+  story_description="${story_description//@@/}"
+  story_criteria="${story_criteria//@@/}"
+  sanitized_content="${sanitized_content//@@/}"
+
+  # sanitize_for_prompt escapes $ for the OLD unquoted heredoc. The heredoc
+  # is quoted now and this file is never re-evaluated by a shell, so the
+  # backslash is noise that reaches the agent — including the commit message
+  # it is told to use. Reverse it here rather than changing sanitize_for_prompt,
+  # which has other callers.
+  story_id="${story_id//\\\$/\$}"
+  story_title="${story_title//\\\$/\$}"
+  story_description="${story_description//\\\$/\$}"
+  story_criteria="${story_criteria//\\\$/\$}"
+  sanitized_content="${sanitized_content//\\\$/\$}"
+
+  local tpl
+  tpl=$(cat <<'PROMPT_IMPL'
+# Agent Instructions: Implement Story @@STORY_ID@@
 
 You are an autonomous coding agent. Implement the following user story.
 
 ## Your Story
 
-- **ID:** ${story_id}
-- **Title:** ${story_title}
-- **Description:** ${story_description}
+- **ID:** @@STORY_ID@@
+- **Title:** @@STORY_TITLE@@
+- **Description:** @@STORY_DESCRIPTION@@
 
 ### Acceptance Criteria
 
-${story_criteria}
+@@STORY_CRITERIA@@
 
 ## Instructions
 
-1. Read the progress file in the \`.reqdrive/runs/\` directory for context from previous iterations
-2. Read the \`prd.json\` file in the same run directory for full PRD context
-3. Implement **this story only** (${story_id})
+1. Read the progress file in the `.reqdrive/runs/` directory for context from previous iterations
+2. Read the `prd.json` file in the same run directory for full PRD context
+3. Implement **this story only** (@@STORY_ID@@)
 4. Run quality checks (test, typecheck, lint as appropriate)
 5. If checks pass:
-   - Commit with message: \`feat: [${story_id}] - ${story_title}\`
-   - Update PRD: set \`passes: true\` for story ${story_id}
-   - Append progress to \`progress.txt\`
+   - Commit with message: `feat: [@@STORY_ID@@] - @@STORY_TITLE@@`
+   - Update PRD: set `passes: true` for story @@STORY_ID@@
+   - Append progress to `progress.txt`
 
 ## Progress Format
 
 Append to progress.txt:
-\`\`\`
-## [Date] - ${story_id}
+```
+## [Date] - @@STORY_ID@@
 - What was implemented
 - Files changed
 - Learnings for future iterations
 ---
-\`\`\`
+```
 
 ## Important
 
-- Implement ONLY story ${story_id}
+- Implement ONLY story @@STORY_ID@@
 - Commit after completing the story
 - Keep tests passing
-- If you discover a dependency issue, update priorities in prd.json and leave this story as \`passes: false\`
+- If you discover a dependency issue, update priorities in prd.json and leave this story as `passes: false`
 
 ## Iteration Summary
 
 At the END of your response, output a summary:
 
-\`\`\`json:iteration-summary
+```json:iteration-summary
 {
-  "storyId": "${story_id}",
+  "storyId": "@@STORY_ID@@",
   "action": "implemented|skipped|failed",
   "filesChanged": ["path/to/file"],
   "testsRun": true,
@@ -353,19 +379,35 @@ At the END of your response, output a summary:
   "committed": true,
   "notes": "Brief description"
 }
-\`\`\`
+```
 
 ---
 
 ## Requirement Document (Reference)
 
-${sanitized_content}
+@@REQUIREMENT@@
 PROMPT_IMPL
+)
+
+  # Quoted replacements — unquoted, & in a value expands to the match.
+  # Order matters: @@STORY_ID@@ is substituted before @@STORY_TITLE@@,
+  # @@STORY_DESCRIPTION@@, and @@STORY_CRITERIA@@ so that a PRD-derived
+  # value containing token-like text (e.g. a description that reads
+  # "...@@STORY_ID@@...") is inserted as inert literal text and cannot be
+  # caught by a still-pending substitution pass. @@REQUIREMENT@@ (the
+  # largest, least-controlled value) goes last for the same reason.
+  tpl="${tpl//@@STORY_ID@@/"$story_id"}"
+  tpl="${tpl//@@STORY_TITLE@@/"$story_title"}"
+  tpl="${tpl//@@STORY_CRITERIA@@/"$story_criteria"}"
+  tpl="${tpl//@@STORY_DESCRIPTION@@/"$story_description"}"
+  tpl="${tpl//@@REQUIREMENT@@/"$sanitized_content"}"
+
+  printf '%s\n' "$tpl" > "$prompt_file"
 }
 
 # ── Story Selection ──────────────────────────────────────────────────────────
 
-# Select the next story to implement (highest priority where passes == false)
+# Select the next story to implement (highest priority where passes != true)
 # Args: $1 = prd_file
 # Prints the story ID, or empty string if all complete
 select_next_story() {
@@ -379,7 +421,7 @@ select_next_story() {
 
   local story_id
   story_id=$(jq -r --argjson max "$max_retries" '
-    [.userStories[] | select(.passes == false and ((.attempts // 0) < $max))]
+    [.userStories[] | select(.passes != true and ((.attempts // 0) < $max))]
     | sort_by(.priority)
     | first
     | .id // empty
@@ -1013,12 +1055,14 @@ EOF
     RUN_SUMMARY_ITERATIONS=$((RUN_SUMMARY_ITERATIONS + 1))
 
     # Run test command if configured (observation mode — warn, don't abort)
+    local iter_tests_passed=0
     if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
       log_info "Running test command: $REQDRIVE_TEST_COMMAND"
       local test_log="$agent_dir/iteration-$i.test.log"
       if eval "$REQDRIVE_TEST_COMMAND" > "$test_log" 2>&1; then
         log_info "Tests passed after iteration $i"
         RUN_SUMMARY_TESTS_PASSED=$((RUN_SUMMARY_TESTS_PASSED + 1))
+        iter_tests_passed=1
       else
         log_warn "Tests FAILED after iteration $i (see iteration-$i.test.log)"
         RUN_SUMMARY_TESTS_FAILED=$((RUN_SUMMARY_TESTS_FAILED + 1))
@@ -1035,6 +1079,17 @@ EOF
     else
       log_warn "Expected commit for $next_story, latest commit: $latest_commit_msg"
       RUN_SUMMARY_COMMITS_MISSING=$((RUN_SUMMARY_COMMITS_MISSING + 1))
+    fi
+
+    # Scope check: a high-risk path changed without a passing test run is a
+    # policy pre-condition finding. warn (default) logs it and continues;
+    # block aborts with EXIT_PREFLIGHT_FAILED, reusing the existing code
+    # rather than inventing a new one.
+    source "$REQDRIVE_ROOT/lib/policy.sh"
+    if ! policy_scope_check "$agent_dir" "$i" "$iter_tests_passed"; then
+      write_run_status "$agent_dir" "failed" "$req_id" "$i" "$EXIT_PREFLIGHT_FAILED"
+      run_completion_hook "$req_id" "failed" "" "$branch" "$EXIT_PREFLIGHT_FAILED"
+      exit "$EXIT_PREFLIGHT_FAILED"
     fi
 
     # Increment attempt counter for this story in prd.json
@@ -1073,23 +1128,16 @@ EOF
   log_info "  Phase 3: Verification"
   log_info "═══════════════════════════════════════════════════════"
 
+  source "$REQDRIVE_ROOT/lib/verification.sh"
+
   # Collect story stats from prd.json
-  local final_remaining="?"
-  local stories_total=0
-  local stories_completed=0
-  local stories_failed=0
-
-  if [ -f "$prd_file" ]; then
-    stories_total=$(jq '.userStories | length' "$prd_file" 2>/dev/null || echo "0")
-    stories_completed=$(jq '[.userStories[] | select(.passes == true)] | length' "$prd_file" 2>/dev/null || echo "0")
-    final_remaining=$(jq '[.userStories[] | select(.passes == false)] | length' "$prd_file" 2>/dev/null || echo "?")
-
-    # Stories that exhausted their retry limit
-    local max_story_retries_check="${REQDRIVE_MAX_STORY_RETRIES:-3}"
-    stories_failed=$(jq --argjson max "$max_story_retries_check" \
-      '[.userStories[] | select(.passes == false and ((.attempts // 0) >= $max))] | length' \
-      "$prd_file" 2>/dev/null || echo "0")
-  fi
+  local final_remaining prd_present stories_total stories_completed stories_failed
+  verify_collect "$prd_file" "${REQDRIVE_MAX_STORY_RETRIES:-3}"
+  stories_total=$VERIFY_STORIES_TOTAL
+  stories_completed=$VERIFY_STORIES_COMPLETED
+  stories_failed=$VERIFY_STORIES_FAILED
+  final_remaining=$VERIFY_STORIES_REMAINING
+  prd_present=$VERIFY_PRD_PRESENT
 
   RUN_SUMMARY_STORIES_TOTAL=$stories_total
   RUN_SUMMARY_STORIES_COMPLETED=$stories_completed
@@ -1100,61 +1148,22 @@ EOF
   log_info "Commits: $RUN_SUMMARY_COMMITS_VERIFIED verified, $RUN_SUMMARY_COMMITS_MISSING missing"
 
   # Run final verification test if testCommand is configured
-  local verification_passed=true
-  local verification_log="$agent_dir/verification.test.log"
-
-  if [ -n "${REQDRIVE_TEST_COMMAND:-}" ]; then
-    log_info "Running final verification: $REQDRIVE_TEST_COMMAND"
-    if eval "$REQDRIVE_TEST_COMMAND" > "$verification_log" 2>&1; then
-      log_info "Final verification PASSED"
-    else
-      log_warn "Final verification FAILED (see verification.test.log)"
-      verification_passed=false
-    fi
-  else
-    log_info "No testCommand configured, skipping final verification"
-    verification_passed=null
-  fi
+  # (captured via `|| rc=$?`, not a bare call + `case $?`, since a bare
+  # non-zero return would trip this file's `set -e` before the case ran)
+  local verification_passed verify_rc=0
+  verify_run_tests "$agent_dir" || verify_rc=$?
+  case $verify_rc in
+    0) verification_passed=true ;;
+    1) verification_passed=false ;;
+    2) verification_passed=null ;;
+  esac
 
   RUN_SUMMARY_VERIFICATION_PASSED=$verification_passed
 
   # Write verification summary for PR enrichment and pipeline consumption
-  local verification_file="$agent_dir/verification-summary.json"
-  cat > "$verification_file" <<VEOF
-{
-  "version": "0.3.0",
-  "req_id": "$req_id",
-  "timestamp": "$(date -Iseconds)",
-  "stories": {
-    "total": $stories_total,
-    "completed": $stories_completed,
-    "failed": $stories_failed,
-    "remaining": $([ "$final_remaining" = "?" ] && echo "null" || echo "$final_remaining")
-  },
-  "iterations": {
-    "run": $RUN_SUMMARY_ITERATIONS,
-    "max": $max_iterations
-  },
-  "tests": {
-    "passed": $RUN_SUMMARY_TESTS_PASSED,
-    "failed": $RUN_SUMMARY_TESTS_FAILED,
-    "skipped": $RUN_SUMMARY_TESTS_SKIPPED
-  },
-  "commits": {
-    "verified": $RUN_SUMMARY_COMMITS_VERIFIED,
-    "missing": $RUN_SUMMARY_COMMITS_MISSING
-  },
-  "verification_passed": $verification_passed
-}
-VEOF
+  verify_write_summary "$agent_dir" "$req_id" "$max_iterations" full
 
   log_info "Verification summary written to verification-summary.json"
-
-  # Decide PR draft status based on verification results
-  if [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ]; then
-    log_warn "Agent did not complete all stories ($final_remaining remaining)"
-    log_warn "Creating draft PR for review"
-  fi
 
   # ── Create PR ──
   log_info ""
@@ -1164,12 +1173,20 @@ VEOF
 
   source "$REQDRIVE_ROOT/lib/pr-create.sh"
 
-  local draft_flag=""
-  if [ "$final_remaining" != "0" ] && [ "$final_remaining" != "?" ]; then
-    draft_flag="--draft"
-  elif [ "$verification_passed" = "false" ]; then
-    log_warn "Final verification failed — creating draft PR"
-    draft_flag="--draft"
+  # Fail-closed: draft unless every piece of positive evidence is present.
+  local draft_flag="--draft"
+  if [ "$prd_present" -eq 1 ] && [ "$final_remaining" -eq 0 ] && [ "$verification_passed" = "true" ]; then
+    draft_flag=""
+  else
+    if [ "$prd_present" -ne 1 ]; then
+      log_warn "No prd.json — creating draft PR"
+    elif [ "$final_remaining" -ne 0 ]; then
+      log_warn "$final_remaining stories incomplete — creating draft PR"
+    elif [ "$verification_passed" = "null" ]; then
+      log_warn "No testCommand configured, so nothing verified the output — creating draft PR"
+    else
+      log_warn "Final verification failed — creating draft PR"
+    fi
   fi
 
   local pr_url=""

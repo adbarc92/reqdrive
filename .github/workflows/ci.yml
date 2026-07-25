@@ -26,7 +26,7 @@ jobs:
         run: shellcheck install.sh
 
       - name: Lint test scripts
-        run: shellcheck tests/simple-test.sh tests/run-tests.sh
+        run: shellcheck tests/simple-test.sh tests/run-tests.sh tests/mutate.sh tests/spec-map.sh tests/oracle-gate.sh tests/gate-selftest.sh tests/lib/pipeline-harness.sh tests/launch-lifecycle.sh
 
   syntax-check:
     name: Bash syntax check
@@ -67,3 +67,29 @@ jobs:
 
       - name: Run E2E tests
         run: bats --formatter tap tests/e2e/
+
+      - name: Fail on any e2e skip
+        run: |
+          skips=$(bats --formatter tap tests/e2e | grep -c '# skip' || true)
+          echo "e2e skips: $skips"
+          [ "$skips" -eq 0 ]
+
+  oracle-gate:
+    name: Freeze gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce the frozen oracle
+        run: bash tests/oracle-gate.sh
+
+      - name: Prove the gate rules fire
+        run: bash tests/gate-selftest.sh
+
+  launch-lifecycle:
+    name: Launch lifecycle (Linux only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run launch lifecycle tests
+        run: bash tests/launch-lifecycle.sh

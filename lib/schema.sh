@@ -87,6 +87,33 @@ validate_config_schema() {
     done <<< "$check"
   fi
 
+  # policy (optional object)
+  if jq -e 'has("policy")' "$file" > /dev/null 2>&1; then
+    if ! jq -e '.policy | type == "object"' "$file" > /dev/null 2>&1; then
+      echo "[SCHEMA] policy must be an object" >&2
+      errors=$((errors + 1))
+    else
+      if jq -e '.policy | has("scopeCheck")' "$file" > /dev/null 2>&1; then
+        local sc
+        sc=$(jq -r '.policy.scopeCheck' "$file")
+        case "$sc" in
+          warn|block) ;;
+          *) echo "[SCHEMA] policy.scopeCheck must be \"warn\" or \"block\" (got \"$sc\")" >&2
+             errors=$((errors + 1)) ;;
+        esac
+      fi
+      if jq -e '.policy | has("riskTiers")' "$file" > /dev/null 2>&1; then
+        if ! jq -e '.policy.riskTiers | type == "object"' "$file" > /dev/null 2>&1; then
+          echo "[SCHEMA] policy.riskTiers must be an object" >&2
+          errors=$((errors + 1))
+        elif ! jq -e '[.policy.riskTiers[] | type == "array"] | all' "$file" > /dev/null 2>&1; then
+          echo "[SCHEMA] policy.riskTiers values must be arrays of path prefixes" >&2
+          errors=$((errors + 1))
+        fi
+      fi
+    fi
+  fi
+
   [ "$errors" -eq 0 ]
 }
 

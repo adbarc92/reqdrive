@@ -148,15 +148,20 @@ create_pr() {
     v_verification_passed=$(jq -r '.verification_passed' "$verification_file" 2>/dev/null || echo "null")
 
     local v_status_icon="⚠️"
+    local v_verification_reason="Not verified — no test command configured."
     if [ "$v_verification_passed" = "true" ]; then
       v_status_icon="✅"
+      v_verification_reason="Verification passed."
     elif [ "$v_verification_passed" = "false" ]; then
       v_status_icon="❌"
+      v_verification_reason="Verification failed — tests did not pass."
     fi
 
     verification_section=$(cat <<VSEOF
 
 ## Pipeline Verification $v_status_icon
+
+$v_verification_reason
 
 | Metric | Result |
 |--------|--------|
@@ -171,6 +176,18 @@ create_pr() {
 | Final verification | $v_verification_passed |
 VSEOF
     )
+  fi
+
+  # Load scope-check findings if any exist (warn-mode high-risk path
+  # violations from policy_scope_check, one line per iteration)
+  local scope_findings_file="$agent_dir/scope-findings.txt"
+  local scope_section=""
+  if [ -f "$scope_findings_file" ] && [ -s "$scope_findings_file" ]; then
+    scope_section=$(printf '\n### Scope findings\n\n')
+    while IFS= read -r finding_line; do
+      [ -n "$finding_line" ] || continue
+      scope_section+="- $finding_line"$'\n'
+    done < "$scope_findings_file"
   fi
 
   # Build label flags with proper sanitization
@@ -214,6 +231,7 @@ VSEOF
 $commits
 \`\`\`
 $verification_section
+$scope_section
 
 ## Validation Checklist
 

@@ -1,3 +1,6 @@
+> **Superseded — see the Roadmap section of [CLAUDE.md](./CLAUDE.md).**
+> This is the v0.2.0 simplification plan; its unchecked boxes describe work that shipped. Retained as history.
+
 # reqdrive Simplification Roadmap
 
 ## Vision
