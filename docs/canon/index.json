@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "generated": "2026-07-24",
+  "commit": "7420d69",
+  "architecture_doc": "docs/canon/architecture.md",
+  "modules": [
+    {
+      "name": "cli",
+      "doc": "docs/canon/modules/cli.md",
+      "globs": ["bin/**"],
+      "responsibility": "argument parsing, command dispatch, and the offline commands (status, logs, migrate, verify, launch)",
+      "governing_reqs": 101
+    },
+    {
+      "name": "pipeline",
+      "doc": "docs/canon/modules/pipeline.md",
+      "globs": ["lib/run.sh"],
+      "responsibility": "the requirement-to-PR lifecycle: planning, the story loop, verification orchestration, PR creation, review",
+      "governing_reqs": 212
+    },
+    {
+      "name": "evidence",
+      "doc": "docs/canon/modules/evidence.md",
+      "globs": ["lib/verification.sh", "lib/policy.sh"],
+      "responsibility": "verification math, the verification-summary artifact, risk-tier path classification and the scope check",
+      "governing_reqs": 98
+    },
+    {
+      "name": "pr",
+      "doc": "docs/canon/modules/pr.md",
+      "globs": ["lib/pr-create.sh"],
+      "responsibility": "PR body construction (validation checklist, verification table, scope findings) and submission via gh",
+      "governing_reqs": 44
+    },
+    {
+      "name": "config",
+      "doc": "docs/canon/modules/config.md",
+      "globs": ["lib/config.sh", "lib/schema.sh", "lib/validate.sh", "lib/init.sh", "templates/**"],
+      "responsibility": "manifest discovery and loading, JSON schema predicates, the validate command, the init wizard",
+      "governing_reqs": 128
+    },
+    {
+      "name": "safety",
+      "doc": "docs/canon/modules/safety.md",
+      "globs": ["lib/sanitize.sh", "lib/preflight.sh", "lib/errors.sh"],
+      "responsibility": "input sanitization, pre-run gates, and the exit-code vocabulary",
+      "governing_reqs": 113
+    },
+    {
+      "name": "test-harness",
+      "doc": "docs/canon/modules/test-harness.md",
+      "globs": ["tests/**"],
+      "responsibility": "the 202-assertion suite, the oracle freeze gate, the pipeline harness, and the bats suites",
+      "governing_reqs": 92
+    },
+    {
+      "name": "ci-and-install",
+      "doc": "docs/canon/modules/ci-and-install.md",
+      "globs": [".github/**", "install.sh", "scripts/**"],
+      "responsibility": "the six CI gate jobs and the installer",
+      "governing_reqs": 30
+    },
+    {
+      "name": "skills-and-archive",
+      "doc": "docs/canon/modules/skills-and-archive.md",
+      "globs": ["skills/**", "archive/**"],
+      "responsibility": "inert peers: four Claude Code skills and the archived v0.1.x implementation",
+      "governing_reqs": 4
+    }
+  ],
+  "conventions": [
+    {
+      "topic": "shell-conventions",
+      "doc": "docs/canon/conventions/shell-conventions.md",
+      "globs": ["bin/**", "lib/**", "tests/**", "scripts/**", "install.sh"],
+      "responsibility": "shell modes, sourcing model, logging and error propagation"
+    },
+    {
+      "topic": "artifact-contracts",
+      "doc": "docs/canon/conventions/artifact-contracts.md",
+      "globs": ["lib/**", "bin/**", "tests/fixtures/**"],
+      "responsibility": "JSON for machine state, Markdown for agent context, schemaVersion 0.3.0"
+    },
+    {
+      "topic": "sanitization",
+      "doc": "docs/canon/conventions/sanitization.md",
+      "globs": ["lib/**", "bin/**"],
+      "responsibility": "what is sanitized, where the security boundary actually is, and where it is not"
+    },
+    {
+      "topic": "testing-and-freeze",
+      "doc": "docs/canon/conventions/testing-and-freeze.md",
+      "globs": ["tests/**", ".github/**"],
+      "responsibility": "one behavior-spec story per assertion, whole-file freeze hashes, doc-coverage gates"
+    }
+  ],
+  "requirements": {
+    "register": "docs/canon/requirements/register.md",
+    "drift_report": "docs/canon/requirements/drift-report.md",
+    "claims_audit": "docs/canon/claims-audit.md"
+  },
+  "unbuilt_features": [
+    "Vision-based QA agent (Playwright + Claude Vision) — CLD-092 — roadmap, 0% built, deliberately deferred",
+    "Multi-requirement parallelism via git worktrees (`reqdrive orchestrate`) — CLD-093 — roadmap, stub only at bin/reqdrive:579-586",
+    "PR rejection feedback loop — CLD-094 — roadmap, 0% built",
+    "CI integration via `gh pr checks` polling — CLD-095 — roadmap, 0% built",
+    "Cost tracking / token budgets — CLD-096 — roadmap, 0% built",
+    "Adaptive retry policies — CLD-097 — roadmap, 0% built"
+  ]
+}
