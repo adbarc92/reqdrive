@@ -23,7 +23,7 @@ command -v jq >/dev/null || { echo "FATAL: jq required" >&2; exit 1; }
 command -v sha256sum >/dev/null || { echo "FATAL: sha256sum required" >&2; exit 1; }
 
 WORK=$(mktemp -d) || { echo "FATAL: mktemp failed" >&2; exit 1; }
-[ -n "$WORK" ] && [ -d "$WORK" ] || { echo "FATAL: bad WORK" >&2; exit 1; }
+if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then echo "FATAL: bad WORK" >&2; exit 1; fi
 trap 'rm -rf "$WORK"' EXIT
 
 hash_file() { sha256sum "$1" | cut -d' ' -f1; }
