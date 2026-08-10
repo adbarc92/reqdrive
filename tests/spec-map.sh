@@ -11,7 +11,7 @@ SPEC="$SCRIPT_DIR/BEHAVIOR-SPEC.md"
 MODE="${1:-validate}"
 
 WORK=$(mktemp -d) || { echo "FATAL: mktemp failed" >&2; exit 1; }
-[ -n "$WORK" ] && [ -d "$WORK" ] || { echo "FATAL: bad WORK" >&2; exit 1; }
+if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then echo "FATAL: bad WORK" >&2; exit 1; fi
 trap 'rm -rf "$WORK"' EXIT
 
 # Runtime names, from an actual run. Strip ANSI, match the three verdicts,

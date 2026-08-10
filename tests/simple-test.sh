@@ -54,7 +54,7 @@ test_skip() {
 
 # Create temp directory
 TEST_TEMP=$(mktemp -d) || { echo "FATAL: mktemp failed" >&2; exit 1; }
-[ -n "$TEST_TEMP" ] && [ -d "$TEST_TEMP" ] || { echo "FATAL: bad TEST_TEMP" >&2; exit 1; }
+if [ -z "$TEST_TEMP" ] || [ ! -d "$TEST_TEMP" ]; then echo "FATAL: bad TEST_TEMP" >&2; exit 1; fi
 trap 'rm -rf "$TEST_TEMP"' EXIT
 
 echo "========================================"
