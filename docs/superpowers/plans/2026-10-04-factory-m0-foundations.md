@@ -183,7 +183,7 @@ outcome, evidence, failure, stop }`, `Outcome`, `Evidence` (with `spec_hash`, `m
 | A2 | Review and merge RD-COORD's pull request into `factory/m0` | RD-FORMS, SANDBOX |
 | A3 | The milestone 1 harness plan (`docs/superpowers/plans/2026-10-04-factory-m1-harness.md`) exists on `main` | RD-FORMS |
 | A4 | Approve the Forms: read RD-FORMS's pull request, then change each approved Form's `- status: draft` to `- status: frozen` (or tell the reviewing session to) and merge | RD-SKEL; milestone 1 |
-| A5 | Approve documenting the Form, registry and repository-configuration formats in this public repository (`docs/forms.md`, `docs/repo-config.md`): the formats only, restated | Merging RD-COORD and SANDBOX |
+| A5 | Approve documenting the Form, registry and repository-configuration formats in this public repository (`docs/forms.md`, `docs/repo-config.md`): the formats only, restated. **Approved 2026-10-05**, for this repository and `command-center` | Merging RD-COORD and SANDBOX |
 | A6 | In `command-center`: merge its `factory/m0` to `main` and push the tag `contracts-v0.2.0` | RD-SKEL |
 | A7 | Create the second sandbox repository: `gh repo create adbarc92/command-center-agent-sandbox-cargo --private --add-readme --description "Throwaway sandbox for reqdrive agent runs on the cargo preset"` | SANDBOX Task 3 |
 | A8 | Read the findings of spikes S6 (test ids and reports) and S7 (offline runs) | SANDBOX Task 4 |
@@ -1732,11 +1732,11 @@ entries, each on its own line:
 
 Exactly these headings, in this order. No other line in the file may begin with `## `.
 
-1. **Purpose.** One paragraph: what the crate is for and what would break without it.
+1. **Purpose.** One paragraph: why the crate exists, and what stops working if it is removed.
 2. **Interface.** The complete public surface: signatures, types, events, and how it reports
    errors. Anything not written here is implementation and may be rewritten freely.
 3. **Invariants.** Numbered `I1.`, `I2.`, … one per line, each a sentence a test could prove
-   false. "The crate is well designed" is not an invariant. "No public function does I/O" is.
+   false. A judgement of quality does not qualify. "`parse` never reads a file" does.
 4. **Hidden decisions.** What the interface conceals on purpose, so that nobody helpfully
    exposes it later. A crate with nothing to hide probably does not need a Form.
 5. **Gates.** A table, one row per check:
@@ -1747,7 +1747,7 @@ Exactly these headings, in this order. No other line in the file may begin with 
    | Guards | The invariants it guards, comma-separated: `I1, I3` |
    | Mechanism | What kind of check it is, in the order of preference below |
    | Location | The file that is the check |
-   | Blocks | What it stops: `build`, `commit` or `merge`. Never empty: a gate that blocks nothing is prose |
+   | Blocks | What it stops: `build`, `commit` or `merge`. Required: every gate must stop something |
 
 6. **Unenforced.** Either the single line `None.`, or one line per invariant no gate guards:
    `- I4: <why> (<date>)`. Each is a debt, and the list should be empty.
