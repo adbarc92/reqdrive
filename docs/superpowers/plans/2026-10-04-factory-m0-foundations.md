@@ -72,10 +72,28 @@ contract crates `harness-protocol`, `factory-spec` and `factory-presets` come fr
    integration | e2e | live`.
    - `static`: format check, clippy with warnings denied, `deps`, `parity`.
    - `unit`: each crate's library tests, one crate at a time. No Docker, network or token.
-   - `contract`: the freeze gate, every locked `contract_*.rs`, and the conformance kit run
-     against `reqdrive harness --fake`.
+   - `contract`: the freeze gate, every locked contract test target, and the conformance kit
+     run against `reqdrive harness --fake`.
    - `integration`, `e2e`, `live`: exist, and print `no tests in this tier yet` while empty.
-   - A test's tier is its file name: `crates/<crate>/tests/<tier>_<name>.rs`.
+
+   **The tier naming rule.** It is the program's rule, the same in the control plane's
+   repository, and it is stated here once. A test inside `src/` is a `unit` test. A test
+   target under `crates/<crate>/tests/` is placed by its file name and by nothing else; the
+   first row that matches wins:
+
+   | File name under `tests/` | Tier |
+   |---|---|
+   | `e2e_*.rs` | `e2e` |
+   | `live_*.rs` | `live` |
+   | `*_it.rs` | `integration` |
+   | `characterisation_*.rs` | `unit`: it runs with the crate's own tests |
+   | any other name | `contract` |
+
+   The rule is one function, `xtask::tier_of_test_target`. It is total, so no test target is
+   left out of every tier. Two consequences: a test that needs Docker, a network or a token
+   must be named for `integration`, `e2e` or `live`; and every other file under `tests/` is a
+   contract test, hash-locked (decision 7). This plan's three are named `contract_*.rs` by
+   convention, not because the name places them.
 5. **CI** runs `static`, a per-crate `unit` matrix on `ubuntu-latest` and `windows-latest`, and
    `contract`. (This plan also runs `contract` on Windows: the harness's stdio is what the
    Windows control plane will use. It is one extra job and can be cut.)
@@ -99,7 +117,7 @@ contract crates `harness-protocol`, `factory-spec` and `factory-presets` come fr
    `<n> passed, <n> skipped, <n> failed`. `xtask` reads the tag from `cargo metadata`, so the
    kit can never be a different version from the wire types. A skipped case fails the tier.
 7. **Locked contract tests** (doctrine B2, B3). `forms/contract.lock.json` holds the SHA-256 of
-   every `contract_*.rs` and of the gate's own source. `cargo xtask lock check` enforces it;
+   every contract test target and of the gate's own source. `cargo xtask lock check` enforces it;
    `cargo xtask lock accept` rewrites it. Run `accept` only where a step says to, and name the
    lock's diff in your pull-request body: the owner's review of that diff is the approval.
 8. **What the skeleton sends**, in order, for one unit:
@@ -113,12 +131,23 @@ contract crates `harness-protocol`, `factory-spec` and `factory-presets` come fr
      `review_finished`. The harness loops Green, Check and Review until a review has zero
      unresolved blockers and the round count has reached the work order's `min_review_rounds`.
    - `unit/result` is last, and the process exits 0.
+   - A `pr_open` result carries evidence. So does a `no_change` result: the protocol requires
+     it, and its `branch` and `head_sha` name the commit that holds the frozen tests the
+     harness wrote, which the control plane then runs against the base. In `no_change`
+     evidence there are no control results and no review, because nothing was built.
    - A rejected gate ends `failed`, detail `oracle rejected`. `unit/halt` and `unit/abandon`
      are answered, and the process exits without a result. On `resume{oracle_frozen: true}`:
      `provisioned`, then Green, Check, Review and Deliver, with no freeze and no gate.
+   - **A line from the control plane that cannot be read is fatal for the unit.** The
+     protocol's reader reports two such lines: one that is not UTF-8 (`InvalidUtf8`) and one
+     longer than `MAX_LINE_BYTES` (`LineTooLong`). The first might have been an abandon or a
+     gate answer; the second leaves the reader in the middle of a line. So neither is
+     skipped: the harness reads nothing further, writes the reason to stderr, and ends the
+     unit as it does when stdin closes, with no result. A line that is readable text but not
+     a JSON-RPC message is a different case and is dropped.
 9. **Exit codes of `reqdrive harness`:** 0 when a result was sent, or the unit was interrupted
-   and said so, or stdin closed; 1 for a fault in the harness; 2 for bad arguments or an
-   unusable scenario; 3 when the handshake failed.
+   and said so, or stdin closed or became unreadable; 1 for a fault in the harness; 2 for bad
+   arguments or an unusable scenario; 3 when the handshake failed.
 
 **Names from protocol 0.2 this plan relies on** (from `harness-protocol` at the tag; do not
 rename them, and do not define your own copies): `PROTOCOL_VERSION`, `InitializeParams {
@@ -134,14 +163,17 @@ outcome, evidence, failure, stop }`, `Outcome`, `Evidence` (with `spec_hash`, `m
 `test_report`, `controls`, `review`), `DeliveryEvidence`, `TestRun`, `TestReport`,
 `ControlResult`, `ControlStatus`, `ReviewEvidence`, `Failure`, `ErrorScope`, `Stop`,
 `StopReason`, `Empty`, `RpcMessage`, `MessageKind`, `method`, `error_code`, `read_message`,
-`write_message`, `ReadError`, `file_sha256`, `bundle_hash`, `negotiate`. From `factory-presets`:
-`PRESETS_VERSION`, `preset`. From `factory-spec`: `sha256_hex`.
+`write_message`, `ReadError` (five variants: `Eof`, `Malformed`, `InvalidUtf8`, `LineTooLong`,
+`Io`), `MAX_LINE_BYTES`, `monitor::{ProtocolMonitor, Inbound}`, `file_sha256`, `bundle_hash`,
+`negotiate`. From `factory-presets`: `PRESETS_VERSION`, `preset`. From `factory-spec`:
+`sha256_hex`.
 
-> **If the tagged crates differ.** This plan's code was compiled against a stand-in written
-> from the program's published type list, because the tag did not exist yet. If a struct at
-> the real tag has a field this plan does not set, or a name is spelt differently, the build
-> fails at RD-SKEL Task 1 or soon after. Do not patch around it and do not edit a contract
-> crate: stop, and report the exact compiler error. The fix is a decision for the owner.
+> **If the tagged crates differ.** The tag did not exist when this plan was written. Its code
+> was compiled and tested against the three contract crates as the control plane's milestone 0
+> plans build them, which is what the tag is meant to hold. If a struct at the real tag still
+> has a field this plan does not set, or a name is spelt differently, the build fails at
+> RD-SKEL Task 1 or soon after. Do not patch around it and do not edit a contract crate:
+> stop, and report the exact compiler error. The fix is a decision for the owner.
 
 ## Owner actions this plan depends on
 
@@ -177,6 +209,14 @@ a `stage` event placed between `oracle_frozen` and `gate/request` (the superviso
 logs, metrics, findings and errors there), and a harness that sends anything after `empty_diff`
 except its result.
 
+A third, found when the skeleton was first built against the real protocol crate: a line
+from the control plane that the reader cannot decode. It is tested at three levels:
+`a_line_that_is_not_utf8_ends_the_input_for_good` and
+`a_line_over_the_limit_ends_the_input_for_good` (RD-SKEL Task 5), and
+`a_line_that_is_not_utf8_ends_the_unit_without_a_result_and_says_why` (Task 8). And every
+way a unit can end is replayed through the protocol's own monitor, the judge the control
+plane uses, in `every_way_a_unit_ends_is_legal_to_the_protocols_own_monitor` (Task 7).
+
 ---
 
 ## Lane RD-COORD
@@ -204,7 +244,7 @@ the archived suite); `rustup`.
 |---|---|
 | `git ls-files \| grep -c '^archive/bash-v0.3/'` | `103` |
 | `cargo xtask test static` | ends `deps: OK (11 crates, 31 source files)` then `parity: OK (4 gates, 0 Forms)`; exit 0 |
-| `cargo xtask test unit` | `xtask` reports `37 passed`, `cli` reports `1 passed`, the other nine `0 passed`; ends `unit: OK (11 crate(s), one at a time)` |
+| `cargo xtask test unit` | `xtask` reports `40 passed`, `cli` reports `1 passed`, the other nine `0 passed`; ends `unit: OK (11 crate(s), one at a time)` |
 | `cargo xtask test contract` | `lock: OK (0 locked contract tests unchanged)` then `contract: no tests in this tier yet` |
 | `cargo xtask test integration`, `e2e`, `live` | each prints `<tier>: no tests in this tier yet`; exit 0 |
 | `cargo run -q -p cli --bin reqdrive -- harness; echo $?` | a line on stderr saying no command is built yet; `2` |
@@ -227,8 +267,8 @@ the archived suite); `rustup`.
 
 ```bash
 git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add \
-  /d/MajorProjects/.swarm-wt/m0-rd-coord -b feat/m0-scaffold origin/main
+git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-scaffold \
+  /d/MajorProjects/.swarm-wt/m0-rd-coord origin/main
 cd /d/MajorProjects/.swarm-wt/m0-rd-coord
 git push origin origin/main:refs/heads/factory/m0
 git ls-remote --heads origin factory/m0
@@ -350,7 +390,9 @@ git commit -m "chore(archive): move the Bash implementation to archive/bash-v0.3
   - every library crate with a `testkit` feature and a `testkit` module compiled under
     `cfg(any(test, feature = "testkit"))`;
   - `cli::main_from<I, S>(args: I) -> std::process::ExitCode where I: IntoIterator<Item = S>, S: Into<std::ffi::OsString> + Clone`;
-  - in `xtask`: `pub const TIERS: [&str; 6]`, `pub const USAGE: &str`, `pub fn repo_root() -> PathBuf`,
+  - in `xtask`: `pub const TIERS: [&str; 6]`, `pub const USAGE: &str`,
+    `pub fn tier_of_test_target(name: &str) -> &'static str` (the tier naming rule),
+    `pub fn repo_root() -> PathBuf`,
     `pub fn cargo() -> Command`, `pub fn run(cmd: Command) -> Result<(), String>`,
     `pub fn relative(root: &Path, path: &Path) -> String`, `pub fn files_under(dir: &Path) -> Vec<PathBuf>`,
     `pub fn verdict(gate: &str, ok: String, problems: Vec<String>) -> Result<(), String>`,
@@ -654,6 +696,31 @@ mod tests {
             failed.contains("2 problem(s)") && failed.contains("- a") && failed.contains("- b")
         );
     }
+
+    #[test]
+    fn a_test_target_is_sorted_into_a_tier_by_its_file_name_alone() {
+        assert_eq!(tier_of_test_target("e2e_one_unit"), "e2e");
+        assert_eq!(tier_of_test_target("live_models"), "live");
+        assert_eq!(tier_of_test_target("docker_it"), "integration");
+        assert_eq!(tier_of_test_target("integration_docker_it"), "integration");
+        assert_eq!(tier_of_test_target("characterisation_store"), "unit");
+        assert_eq!(tier_of_test_target("contract_speaker"), "contract");
+        assert_eq!(tier_of_test_target("vectors"), "contract");
+        // A prefix alone does not make an integration test: the suffix does.
+        assert_eq!(tier_of_test_target("integration_docker"), "contract");
+        // The first row that matches wins.
+        assert_eq!(tier_of_test_target("e2e_full_it"), "e2e");
+        assert_eq!(
+            tier_of_test_target("characterisation_store_it"),
+            "integration"
+        );
+        for name in ["", "it", "_it", "x"] {
+            assert!(
+                TIERS.contains(&tier_of_test_target(name)),
+                "{name:?} has a tier"
+            );
+        }
+    }
 }
 ```
 
@@ -662,7 +729,7 @@ mod tests {
 Run: `cargo test -p cli -p xtask`
 
 Expected: it does not compile. The errors name what is missing: `main_from`, `relative`,
-`verdict`.
+`verdict`, `tier_of_test_target`.
 
 - [ ] **Step 6: Write the implementations**
 
@@ -719,6 +786,34 @@ pub const USAGE: &str = "usage:
   cargo xtask deps
   cargo xtask parity
   cargo xtask lock <check|accept>";
+
+/// The tier of a test target under `crates/<crate>/tests/`, decided by its file name and by
+/// nothing else. `name` is the file name without `.rs`. This is the program's naming rule,
+/// the same in the control plane's repository. It is total: every name has a tier, so no
+/// test target can be left out of every tier.
+///
+/// | File name | Tier |
+/// |---|---|
+/// | `e2e_*.rs` | `e2e` |
+/// | `live_*.rs` | `live` |
+/// | `*_it.rs` | `integration` |
+/// | `characterisation_*.rs` | `unit`: it runs with the crate's own tests |
+/// | any other name | `contract` |
+///
+/// The first row that matches wins.
+pub fn tier_of_test_target(name: &str) -> &'static str {
+    if name.starts_with("e2e_") {
+        "e2e"
+    } else if name.starts_with("live_") {
+        "live"
+    } else if name.ends_with("_it") {
+        "integration"
+    } else if name.starts_with("characterisation_") {
+        "unit"
+    } else {
+        "contract"
+    }
+}
 
 /// The repository root: the directory above this crate.
 pub fn repo_root() -> PathBuf {
@@ -808,7 +903,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings && echo "cl
 cargo xtask; echo "exit $?"
 ```
 
-Expected: among the `test result` lines, one `1 passed` (`cli`) and one `3 passed` (`xtask`),
+Expected: among the `test result` lines, one `1 passed` (`cli`) and one `4 passed` (`xtask`),
 no `FAILED`; `fmt ok`; `clippy ok`; the usage text and `exit 2`. The first `cargo` command
 writes `Cargo.lock`.
 
@@ -1666,7 +1761,7 @@ Every invariant must appear in some gate's Guards, or under Unenforced.
 
 1. The type system: the wrong program does not compile.
 2. The build graph: `cargo xtask deps` refuses the dependency.
-3. Locked tests: a `contract_*.rs` file whose hash is frozen (below).
+3. Locked tests: a contract test file whose hash is frozen (below).
 4. A conformance suite run from outside the crate.
 5. A script in CI.
 
@@ -1706,9 +1801,11 @@ A malformed row or section is an error, never a row quietly skipped.
 
 ## Locked contract tests
 
-A file named `crates/<crate>/tests/contract_<name>.rs` is a contract test: it tests a Form's
-interface from outside the crate. `forms/contract.lock.json` records the SHA-256 of every such
-file (with CRLF folded to LF, so every platform agrees) and of the gate's own source.
+A contract test tests a Form's interface from outside the crate. It is a test target under
+`crates/<crate>/tests/` that the tier naming rule places in the `contract` tier: every file
+there that is not an `e2e_*.rs`, a `live_*.rs`, a `*_it.rs` or a `characterisation_*.rs`. Name
+one `contract_<name>.rs`. `forms/contract.lock.json` records the SHA-256 of every such file
+(with CRLF folded to LF, so every platform agrees) and of the gate's own source.
 
 `cargo xtask lock check` fails when a locked file changed or is missing, when a contract test
 exists that the lock does not list, or when the gate itself changed. `cargo xtask lock accept`
@@ -2439,11 +2536,11 @@ git commit -m "feat(xtask): registry parity gate, and the Form and registry form
 - Modify: `xtask/src/lib.rs` (one line)
 
 **Interfaces:**
-- Consumes: `xtask::{files_under, relative, verdict}`.
+- Consumes: `xtask::{files_under, relative, tier_of_test_target, verdict}`.
 - Produces, in `xtask::lock`:
   - `pub const LOCK: &str = "forms/contract.lock.json"`, `pub const GATE: &str = "xtask/src/lock.rs"`
   - `pub fn sha256_normalised(bytes: &[u8]) -> String`
-  - `pub fn contract_tests(root: &Path, prefix: &str) -> Vec<(String, String, String)>` — `(path, crate, test target)` for every `crates/<crate>/tests/<prefix>_*.rs`
+  - `pub fn test_targets(root: &Path, tier: &str) -> Vec<(String, String, String)>` — `(path, crate, test target)` for every `crates/<crate>/tests/<name>.rs` that `xtask::tier_of_test_target` places in `tier`
   - `pub struct Lock { pub conformance_kit: bool, pub gate_sha256: String, pub files: BTreeMap<String, String> }` with `Lock::parse(text: &str) -> Result<Lock, String>` and `Lock::render(&self) -> String`
   - `pub fn compare(lock: &Lock, actual: &BTreeMap<String, String>, gate_hash: &str) -> Vec<String>`
   - `pub fn read(root: &Path) -> Result<Lock, String>`, `pub fn check(root: &Path) -> Result<(), String>`, `pub fn accept(root: &Path) -> Result<(), String>`
@@ -2453,6 +2550,10 @@ This ports the Bash suite's freeze gate (`archive/bash-v0.3/tests/oracle-gate.sh
 whole-file hashes, the gate hashes itself, an unregistered test fails, and re-locking is a
 deliberate act. It does not port the per-test name list; a failing or missing test is caught by
 `cargo test` itself.
+
+What is locked is the whole contract tier: every test target the naming rule places there,
+not only files that happen to be called `contract_*.rs`. So a new file under `tests/` that
+is not named for another tier is caught as an unregistered contract test.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2545,6 +2646,44 @@ mod tests {
         assert_eq!(Lock::parse(&text).unwrap(), original);
         assert_eq!(Lock::parse(&text.replace('\n', "\r\n")).unwrap(), original);
     }
+    #[test]
+    fn test_targets_are_found_per_tier_by_file_name() {
+        let root = std::env::temp_dir().join(format!("xtask-targets-{}", std::process::id()));
+        let tests = root.join("crates").join("demo").join("tests");
+        std::fs::create_dir_all(&tests).unwrap();
+        for name in [
+            "contract_demo.rs",
+            "vectors.rs",
+            "docker_it.rs",
+            "characterisation_old.rs",
+            "e2e_whole.rs",
+            "live_models.rs",
+            "notes.md",
+        ] {
+            std::fs::write(tests.join(name), "").unwrap();
+        }
+        // A file that is not directly under `crates/<crate>/tests/` is not a test target.
+        std::fs::create_dir_all(tests.join("support")).unwrap();
+        std::fs::write(tests.join("support").join("helper.rs"), "").unwrap();
+
+        let names = |tier: &str| -> Vec<String> {
+            test_targets(&root, tier)
+                .into_iter()
+                .map(|(path, krate, target)| {
+                    assert_eq!(krate, "demo");
+                    assert_eq!(path, format!("crates/demo/tests/{target}.rs"));
+                    target
+                })
+                .collect()
+        };
+        assert_eq!(names("contract"), vec!["contract_demo", "vectors"]);
+        assert_eq!(names("integration"), vec!["docker_it"]);
+        assert_eq!(names("unit"), vec!["characterisation_old"]);
+        assert_eq!(names("e2e"), vec!["e2e_whole"]);
+        assert_eq!(names("live"), vec!["live_models"]);
+        assert!(names("static").is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
 ```
 
@@ -2561,10 +2700,13 @@ Put this above the test module in `xtask/src/lock.rs`:
 ```rust
 //! The freeze gate over the locked contract tests.
 //!
-//! A contract test is a file `crates/<crate>/tests/contract_*.rs`. `forms/contract.lock.json`
-//! records the SHA-256 of each one and of this file. `check` fails when a locked file changed
-//! or went missing, when a contract test exists that the lock does not know, or when this gate
-//! itself changed. `accept` rewrites the lock; that is a deliberate act whose diff is reviewed.
+//! A contract test is a test target `crates/<crate>/tests/<name>.rs` that the naming rule
+//! ([`crate::tier_of_test_target`]) places in the `contract` tier: every one that is not an
+//! `e2e_*`, a `live_*`, a `*_it` or a `characterisation_*`. By convention it is named
+//! `contract_<name>.rs`. `forms/contract.lock.json` records the SHA-256 of each one and of
+//! this file. `check` fails when a locked file changed or went missing, when a contract test
+//! exists that the lock does not know, or when this gate itself changed. `accept` rewrites the
+//! lock; that is a deliberate act whose diff is reviewed.
 //!
 //! Hashes are taken over the file with CRLF folded to LF, so a checkout on Windows and one on
 //! Linux agree.
@@ -2585,15 +2727,16 @@ pub fn sha256_normalised(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Every contract test in the tree: `(repository-relative path, crate, test target name)`.
-pub fn contract_tests(root: &Path, prefix: &str) -> Vec<(String, String, String)> {
+/// Every test target the naming rule places in `tier`:
+/// `(repository-relative path, crate, test target name)`, sorted.
+pub fn test_targets(root: &Path, tier: &str) -> Vec<(String, String, String)> {
     let mut found = Vec::new();
     for path in crate::files_under(&root.join("crates")) {
         let relative = crate::relative(root, &path);
         let parts: Vec<&str> = relative.split('/').collect();
         if let ["crates", krate, "tests", file] = parts.as_slice() {
             if let Some(stem) = file.strip_suffix(".rs") {
-                if stem.starts_with(&format!("{prefix}_")) {
+                if crate::tier_of_test_target(stem) == tier {
                     found.push((relative.clone(), krate.to_string(), stem.to_string()));
                 }
             }
@@ -2690,7 +2833,7 @@ fn hash_file(root: &Path, relative: &str) -> Result<String, String> {
 
 fn actual(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut hashes = BTreeMap::new();
-    for (path, _, _) in contract_tests(root, "contract") {
+    for (path, _, _) in test_targets(root, "contract") {
         let hash = hash_file(root, &path)?;
         hashes.insert(path, hash);
     }
@@ -2733,7 +2876,7 @@ pub fn accept(root: &Path) -> Result<(), String> {
 
 Run: `cargo test -p xtask --lib lock::`
 
-Expected: `test result: ok. 7 passed`.
+Expected: `test result: ok. 8 passed`.
 
 - [ ] **Step 5: Commit the gate**
 
@@ -2990,6 +3133,7 @@ git commit -m "feat(xtask): install, run and judge the conformance kit"
 - Consumes: everything `xtask` has so far.
 - Produces:
   - `xtask::tiers::EMPTY: &str = "no tests in this tier yet"`, `pub fn tiers::run(tier: &str, krate: Option<&str>) -> Result<(), String>`
+  - `pub fn tiers::unit_args(krate: &str, characterisation: &[String]) -> Vec<String>`: one crate's unit run, its library tests and any `characterisation_*` targets
   - the commands `cargo xtask test <tier> [crate]`, `cargo xtask deps`, `cargo xtask parity`, `cargo xtask lock check`, `cargo xtask lock accept`
   - `forms/contract.lock.json`, with no file locked and `conformance_kit` false.
 
@@ -3017,6 +3161,26 @@ mod tests {
         let refused = run("static", Some("engine")).unwrap_err();
         assert!(refused.contains("only the unit tier takes a crate"));
     }
+
+    #[test]
+    fn a_unit_run_is_the_library_tests_and_any_characterisation_targets() {
+        assert_eq!(
+            unit_args("engine", &[]),
+            ["test", "--locked", "--package", "engine", "--lib"]
+        );
+        assert_eq!(
+            unit_args("ledger", &["characterisation_old".to_string()]),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "ledger",
+                "--lib",
+                "--test",
+                "characterisation_old"
+            ]
+        );
+    }
 }
 ```
 
@@ -3024,7 +3188,7 @@ mod tests {
 
 Run: `cargo test -p xtask --lib tiers::`
 
-Expected: it does not compile; the errors name the missing function `run`.
+Expected: it does not compile; the errors name the missing functions `run` and `unit_args`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -3036,14 +3200,15 @@ Put this above the test module in `xtask/src/tiers.rs`:
 //! | Tier | Runs | Needs |
 //! |---|---|---|
 //! | `static` | format check, lints as errors, dependency direction, registry parity | nothing |
-//! | `unit` | each crate's library tests, one crate at a time | nothing |
-//! | `contract` | the freeze gate, every `contract_*.rs`, the conformance kit | nothing |
-//! | `integration` | every `integration_*.rs` | Docker for some |
-//! | `e2e` | every `e2e_*.rs` | Docker |
-//! | `live` | every `live_*.rs` | keys and a spend cap |
+//! | `unit` | each crate's library tests and its `characterisation_*` targets, one crate at a time | nothing |
+//! | `contract` | the freeze gate, every contract test target, the conformance kit | nothing |
+//! | `integration` | every `*_it` test target | Docker for some |
+//! | `e2e` | every `e2e_*` test target | Docker |
+//! | `live` | every `live_*` test target | keys and a spend cap |
 //!
-//! A test's tier is its file name: `crates/<crate>/tests/<tier>_<name>.rs`. Library tests are
-//! the unit tier.
+//! A test inside `src/` is a unit test. A test target under `crates/<crate>/tests/` is placed
+//! by its file name and by nothing else: see [`crate::tier_of_test_target`]. A test that needs
+//! Docker, a network or a token must therefore be named for `integration`, `e2e` or `live`.
 
 use crate::metadata::Graph;
 use crate::{cargo, lock, repo_root, run as run_command, TIERS};
@@ -3055,7 +3220,7 @@ pub fn run(tier: &str, krate: Option<&str>) -> Result<(), String> {
         ("static", None) => static_tier(),
         ("unit", krate) => unit(krate),
         ("contract", None) => contract(),
-        ("integration" | "e2e" | "live", None) => by_prefix(tier).map(|ran| {
+        ("integration" | "e2e" | "live", None) => targets_of(tier).map(|ran| {
             if ran == 0 {
                 println!("{tier}: {EMPTY}");
             }
@@ -3087,6 +3252,20 @@ fn static_tier() -> Result<(), String> {
     crate::parity::run()
 }
 
+/// The arguments of one crate's unit run: its library tests, and with them any
+/// `characterisation_*` test target it has.
+pub fn unit_args(krate: &str, characterisation: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = ["test", "--locked", "--package", krate, "--lib"]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+    for target in characterisation {
+        args.push("--test".into());
+        args.push(target.clone());
+    }
+    args
+}
+
 fn unit(krate: Option<&str>) -> Result<(), String> {
     let graph = Graph::load()?;
     let crates: Vec<String> = match krate {
@@ -3099,18 +3278,24 @@ fn unit(krate: Option<&str>) -> Result<(), String> {
         }
         None => graph.members.clone(),
     };
+    let characterisation = lock::test_targets(&repo_root(), "unit");
     for name in &crates {
+        let own: Vec<String> = characterisation
+            .iter()
+            .filter(|(_, krate, _)| krate == name)
+            .map(|(_, _, target)| target.clone())
+            .collect();
         let mut test = cargo();
-        test.args(["test", "--locked", "--package", name, "--lib"]);
+        test.args(unit_args(name, &own));
         run_command(test)?;
     }
     println!("unit: OK ({} crate(s), one at a time)", crates.len());
     Ok(())
 }
 
-/// Run every test target whose file name starts with `<prefix>_`. Returns how many ran.
-fn by_prefix(prefix: &str) -> Result<usize, String> {
-    let targets = lock::contract_tests(&repo_root(), prefix);
+/// Run every test target the naming rule places in `tier`. Returns how many ran.
+fn targets_of(tier: &str) -> Result<usize, String> {
+    let targets = lock::test_targets(&repo_root(), tier);
     for (_, krate, target) in &targets {
         let mut test = cargo();
         test.args(["test", "--locked", "--package", krate]);
@@ -3123,7 +3308,7 @@ fn by_prefix(prefix: &str) -> Result<usize, String> {
 fn contract() -> Result<(), String> {
     let root = repo_root();
     lock::check(&root)?;
-    let ran = by_prefix("contract")?;
+    let ran = targets_of("contract")?;
     let kit_required = lock::read(&root)?.conformance_kit;
     if kit_required {
         crate::kit::run(&root, &Graph::load()?)?;
@@ -3170,6 +3355,34 @@ pub const USAGE: &str = "usage:
   cargo xtask deps
   cargo xtask parity
   cargo xtask lock <check|accept>";
+
+/// The tier of a test target under `crates/<crate>/tests/`, decided by its file name and by
+/// nothing else. `name` is the file name without `.rs`. This is the program's naming rule,
+/// the same in the control plane's repository. It is total: every name has a tier, so no
+/// test target can be left out of every tier.
+///
+/// | File name | Tier |
+/// |---|---|
+/// | `e2e_*.rs` | `e2e` |
+/// | `live_*.rs` | `live` |
+/// | `*_it.rs` | `integration` |
+/// | `characterisation_*.rs` | `unit`: it runs with the crate's own tests |
+/// | any other name | `contract` |
+///
+/// The first row that matches wins.
+pub fn tier_of_test_target(name: &str) -> &'static str {
+    if name.starts_with("e2e_") {
+        "e2e"
+    } else if name.starts_with("live_") {
+        "live"
+    } else if name.ends_with("_it") {
+        "integration"
+    } else if name.starts_with("characterisation_") {
+        "unit"
+    } else {
+        "contract"
+    }
+}
 
 /// The repository root: the directory above this crate.
 pub fn repo_root() -> PathBuf {
@@ -3295,6 +3508,31 @@ mod tests {
             failed.contains("2 problem(s)") && failed.contains("- a") && failed.contains("- b")
         );
     }
+
+    #[test]
+    fn a_test_target_is_sorted_into_a_tier_by_its_file_name_alone() {
+        assert_eq!(tier_of_test_target("e2e_one_unit"), "e2e");
+        assert_eq!(tier_of_test_target("live_models"), "live");
+        assert_eq!(tier_of_test_target("docker_it"), "integration");
+        assert_eq!(tier_of_test_target("integration_docker_it"), "integration");
+        assert_eq!(tier_of_test_target("characterisation_store"), "unit");
+        assert_eq!(tier_of_test_target("contract_speaker"), "contract");
+        assert_eq!(tier_of_test_target("vectors"), "contract");
+        // A prefix alone does not make an integration test: the suffix does.
+        assert_eq!(tier_of_test_target("integration_docker"), "contract");
+        // The first row that matches wins.
+        assert_eq!(tier_of_test_target("e2e_full_it"), "e2e");
+        assert_eq!(
+            tier_of_test_target("characterisation_store_it"),
+            "integration"
+        );
+        for name in ["", "it", "_it", "x"] {
+            assert!(
+                TIERS.contains(&tier_of_test_target(name)),
+                "{name:?} has a tier"
+            );
+        }
+    }
 }
 ````
 
@@ -3302,7 +3540,7 @@ mod tests {
 
 Run: `cargo test -p xtask --lib`
 
-Expected: `test result: ok. 37 passed`.
+Expected: `test result: ok. 40 passed`.
 
 - [ ] **Step 5: Create the lock, and run the tiers that can already run**
 
@@ -3645,20 +3883,33 @@ Two principles of the Bash implementation are retired: "warn before enforce" (re
 |---|---|---|
 | static | `cargo xtask test static` | format, lints as errors, dependency direction, registry parity |
 | unit | `cargo xtask test unit [crate]` | each crate's library tests, alone; no Docker, network or token |
-| contract | `cargo xtask test contract` | the freeze gate, every `contract_*.rs`, the conformance kit |
-| integration | `cargo xtask test integration` | every `integration_*.rs` |
+| contract | `cargo xtask test contract` | the freeze gate, every contract test target, the conformance kit |
+| integration | `cargo xtask test integration` | every `*_it.rs` |
 | e2e | `cargo xtask test e2e` | every `e2e_*.rs` |
 | live | `cargo xtask test live` | every `live_*.rs`; real models, only when the owner asks |
 
-- A test's tier is its file name: `crates/<crate>/tests/<tier>_<name>.rs`. Tests inside
-  `src/` are the unit tier.
+- A test inside `src/` is a unit test. A test target under `crates/<crate>/tests/` is placed
+  by its file name and by nothing else; the first row that matches wins:
+
+  | File name | Tier |
+  |---|---|
+  | `e2e_*.rs` | `e2e` |
+  | `live_*.rs` | `live` |
+  | `*_it.rs` | `integration` |
+  | `characterisation_*.rs` | `unit`: it runs with the crate's own tests |
+  | any other name | `contract` |
+
+  The rule is one function, `tier_of_test_target` in `xtask/src/lib.rs`, and it is the same
+  rule in the control plane's repository. A test that needs Docker, a network or a token must
+  be named for `integration`, `e2e` or `live`.
 - Write the failing test first, watch it fail, then write the code.
 - Every crate has a `testkit` feature with builders for its own types. Use another crate's
   testkit as a dev-dependency; never copy its fixtures.
-- **Contract tests are locked.** `forms/contract.lock.json` holds the hash of every
-  `contract_*.rs`. Changing one, or adding one, fails `cargo xtask lock check` until someone
-  runs `cargo xtask lock accept` and the owner reviews the lock's diff. Do not run `accept` to
-  make a red build green; say what changed and why.
+- **Contract tests are locked.** `forms/contract.lock.json` holds the hash of every test
+  target in the contract tier; name one `contract_<name>.rs`. Changing one, or adding one,
+  fails `cargo xtask lock check` until someone runs `cargo xtask lock accept` and the owner
+  reviews the lock's diff. Do not run `accept` to make a red build green; say what changed
+  and why.
 
 ## Forms
 
@@ -3881,8 +4132,8 @@ Form can be written in full here. It is also the example to imitate for the othe
 
 ```bash
 git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add \
-  /d/MajorProjects/.swarm-wt/m0-rd-forms -b feat/m0-forms origin/factory/m0
+git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-forms \
+  /d/MajorProjects/.swarm-wt/m0-rd-forms origin/factory/m0
 cd /d/MajorProjects/.swarm-wt/m0-rd-forms
 test -f docs/forms.md && test -f forms/registry.md && cargo xtask parity
 ```
@@ -3978,13 +4229,17 @@ I7. A request this harness does not know is answered with error -32601, and `uni
 I8. Nothing can be sent after `unit/result`: `finish` consumes the unit.
 I9. The input is drained continuously, on its own thread and without bound, so the control plane can always complete a write to this process whatever the state of this process's output.
 I10. `speaker` starts no process and depends on no other crate of this workspace.
+I11. A line from the control plane that cannot be read, because it is not UTF-8 or is longer than the protocol's line limit, ends the input for good: nothing after it is read, the reason is written to stderr, and the unit stops as it does for a closed input, with no result.
 
 ## Hidden decisions
 
 - How a message becomes a line, and how lines are read back.
 - That the input is read on a thread into a queue, and what kind of queue it is.
 - The ids this side gives its own requests.
-- What happens to an inbound line that is not a message. It is dropped; no caller sees it.
+- What happens to an inbound line that is readable text but not a message. It is dropped; no
+  caller sees it.
+- How an unreadable line is told apart from a closed input. Callers see the same `Stopped`;
+  only stderr says which it was.
 - What `checkpoint` does with the rest of its pause once a message has arrived.
 
 ## Gates
@@ -3993,7 +4248,7 @@ I10. `speaker` starts no process and depends on no other crate of this workspace
 |---|---|---|---|---|
 | G1 | I1, I2, I3, I4, I5, I6, I7 | locked contract tests | `crates/speaker/tests/contract_speaker.rs` | merge |
 | G2 | I8 | type system: `finish` takes the unit by value | `crates/speaker/src/unit.rs` | build |
-| G3 | I4, I6, I9 | locked tests of the real process over real pipes | `crates/cli/tests/contract_harness_process.rs` | merge |
+| G3 | I4, I6, I9, I11 | locked tests of the real process over real pipes | `crates/cli/tests/contract_harness_process.rs` | merge |
 | G4 | I1, I4, I8 | the control plane's conformance kit | `xtask/src/kit.rs` | merge |
 | G5 | I10 | dependency direction | `xtask/src/deps.rs` | merge |
 
@@ -4185,7 +4440,7 @@ plan, and their gates registered as `planned`. No code changed.
 | payload | | | | |
 | controls | | | | |
 | ledger | | | | |
-| speaker | 10 | 5 | 0 | lib.rs, transport.rs, unit.rs, testkit.rs |
+| speaker | 11 | 5 | 0 | lib.rs, transport.rs, unit.rs, testkit.rs |
 
 To approve a Form, change its `- status: draft` to `- status: frozen`.
 
@@ -4250,8 +4505,8 @@ one line. If it prints nothing, stop and report.
 | Command | Expected |
 |---|---|
 | `cargo xtask test static` | ends `deps: OK (11 crates, 38 source files)` and `parity: OK (… gates, 8 Forms)`; exit 0 |
-| `cargo xtask test unit` | `cli` 33 passed, `engine` 8, `runtime` 6, `speaker` 5, `workspace` 4, `xtask` 37, the rest 0; ends `unit: OK (11 crate(s), one at a time)` |
-| `cargo xtask test contract` | `lock: OK (3 locked contract tests unchanged)`; `contract_harness_process` 8 passed, `contract_pins` 5 passed, `contract_speaker` 14 passed; the kit's cases all `PASS`; `conformance: OK (<n> passed, 0 skipped, 0 failed; kit contracts-v0.2.0)`; `contract: OK (3 locked test file(s), conformance kit: true)` |
+| `cargo xtask test unit` | `cli` 35 passed, `engine` 8, `runtime` 6, `speaker` 8, `workspace` 4, `xtask` 40, the rest 0; ends `unit: OK (11 crate(s), one at a time)` |
+| `cargo xtask test contract` | `lock: OK (3 locked contract tests unchanged)`; `contract_harness_process` 9 passed, `contract_pins` 5 passed, `contract_speaker` 14 passed; the kit's cases all `PASS`; `conformance: OK (<n> passed, 0 skipped, 0 failed; kit contracts-v0.2.0)`; `contract: OK (3 locked test file(s), conformance kit: true)` |
 | `cargo xtask test contract` a second time | the same, with `using the cached conformance kit` |
 | `gh pr checks <the PR>` | every job passes, on Linux and on Windows |
 
@@ -4277,8 +4532,8 @@ kit's line for it.
 ```bash
 git ls-remote --tags https://github.com/adbarc92/command-center contracts-v0.2.0
 git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add \
-  /d/MajorProjects/.swarm-wt/m0-rd-skel -b feat/m0-skeleton origin/factory/m0
+git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-skeleton \
+  /d/MajorProjects/.swarm-wt/m0-rd-skel origin/factory/m0
 cd /d/MajorProjects/.swarm-wt/m0-rd-skel
 cargo xtask test static
 ```
@@ -5595,15 +5850,27 @@ git commit -m "feat(workspace): an in-memory fake workspace and repository-path 
 - Modify: `crates/speaker/src/lib.rs`
 
 **Interfaces:**
-- Consumes: `harness_protocol::{read_message, write_message, ReadError, RpcMessage}`.
+- Consumes: `harness_protocol::{read_message, write_message, ReadError, RpcMessage, MAX_LINE_BYTES}`.
 - Produces, in `speaker`:
   - `pub trait Transport { fn send(&mut self, message: &RpcMessage) -> Result<(), Closed>; fn recv(&mut self, wait: Option<Duration>) -> Recv; }`
   - `pub struct Closed;`
   - `pub enum Recv { Message(RpcMessage), Malformed(String), Idle, Closed }`
   - `pub struct StdioTransport<W: Write>`, with `StdioTransport::<Stdout>::stdio() -> Self` and `StdioTransport::over<R: Read + Send + 'static>(input: R, out: W) -> Self`
 
-The one design decision in this file is the one Review Focus 1 is about: the input is read on
-its own thread into a queue with no bound, from the moment the transport exists.
+Two design decisions live in this file.
+
+- The one Review Focus 1 is about: the input is read on its own thread into a queue with no
+  bound, from the moment the transport exists.
+- What a read error means. `harness_protocol::read_message` reports five: `Eof` and `Io` end
+  the input, as they must. `Malformed` (readable text that is not a JSON-RPC message) is
+  passed up as `Recv::Malformed`, and the unit drops it. `InvalidUtf8` and `LineTooLong` are
+  **fatal for the unit**: the first line might have been an abandon or a gate answer, and
+  after the second the reader is in the middle of a line. So the reader thread writes one
+  line to stderr saying which it was, and stops. The caller then sees `Recv::Closed`, and the
+  unit ends exactly as it does when stdin closes: no result, exit 0. No new variant is added
+  to `Recv` or to `Stopped` for this: only stderr tells an unreadable line from a closed input.
+  The `match` in `unreadable` names every variant, so a sixth read error in a later protocol
+  version fails to compile here until someone decides what it means.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5707,6 +5974,51 @@ mod tests {
             Err(Closed)
         );
     }
+    #[test]
+    fn a_line_that_is_not_utf8_ends_the_input_for_good() {
+        let halt = line(&RpcMessage::request(1, method::UNIT_HALT, &Empty {}));
+        let abandon = line(&RpcMessage::request(2, method::UNIT_ABANDON, &Empty {}));
+        let mut input = halt.into_bytes();
+        input.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"method\":\"\xff\xfe\"}\n");
+        input.extend_from_slice(abandon.as_bytes());
+        let mut transport = StdioTransport::over(Cursor::new(input), Vec::new());
+        assert!(matches!(transport.recv(None), Recv::Message(m) if m.id == Some(1)));
+        assert_eq!(
+            transport.recv(None),
+            Recv::Closed,
+            "nothing after the unreadable line is delivered, not even a well-formed message"
+        );
+    }
+
+    #[test]
+    fn a_line_over_the_limit_ends_the_input_for_good() {
+        let abandon = line(&RpcMessage::request(2, method::UNIT_ABANDON, &Empty {}));
+        let mut input = vec![b'x'; harness_protocol::MAX_LINE_BYTES + 1];
+        input.push(b'\n');
+        input.extend_from_slice(abandon.as_bytes());
+        let mut transport = StdioTransport::over(Cursor::new(input), Vec::new());
+        assert_eq!(transport.recv(None), Recv::Closed);
+    }
+
+    #[test]
+    fn only_a_line_that_cannot_be_read_is_fatal_and_each_says_why() {
+        let not_utf8 = ReadError::InvalidUtf8 { line: "?".into() };
+        assert_eq!(
+            unreadable(&not_utf8).as_deref(),
+            Some("a line from the control plane is not UTF-8")
+        );
+        let too_long = ReadError::LineTooLong { limit: 4 };
+        assert_eq!(
+            unreadable(&too_long).as_deref(),
+            Some("a line from the control plane is longer than 4 bytes")
+        );
+        let not_a_message = ReadError::Malformed {
+            line: "hello".into(),
+            error: "expected value".into(),
+        };
+        assert_eq!(unreadable(&not_a_message), None);
+        assert_eq!(unreadable(&ReadError::Eof), None);
+    }
 }
 ```
 
@@ -5737,10 +6049,11 @@ pub struct Closed;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Recv {
     Message(RpcMessage),
-    /// A line that is not a protocol message, kept verbatim.
+    /// A line of readable text that is not a protocol message, kept verbatim.
     Malformed(String),
     /// Nothing arrived within the wait.
     Idle,
+    /// The input has ended: the peer closed it, or sent a line that cannot be read.
     Closed,
 }
 
@@ -5762,6 +6075,20 @@ impl From<Inbound> for Recv {
             Inbound::Message(message) => Recv::Message(message),
             Inbound::Malformed(line) => Recv::Malformed(line),
         }
+    }
+}
+
+/// Why a read error ends the input for good, if it does. A line that is not UTF-8 could have
+/// been anything, an interrupt or a gate answer included, and a line over the limit leaves the
+/// reader inside it. Neither can be skipped safely, so each is treated as the control plane
+/// going away: reading stops, and the unit ends as it does when the input closes.
+fn unreadable(error: &ReadError) -> Option<String> {
+    match error {
+        ReadError::InvalidUtf8 { .. } => Some("a line from the control plane is not UTF-8".into()),
+        ReadError::LineTooLong { limit } => Some(format!(
+            "a line from the control plane is longer than {limit} bytes"
+        )),
+        ReadError::Eof | ReadError::Io(_) | ReadError::Malformed { .. } => None,
     }
 }
 
@@ -5792,7 +6119,12 @@ impl<W: Write> StdioTransport<W> {
                 let item = match read_message(&mut reader) {
                     Ok(message) => Inbound::Message(message),
                     Err(ReadError::Malformed { line, .. }) => Inbound::Malformed(line),
-                    Err(ReadError::Eof) | Err(ReadError::Io(_)) => break,
+                    Err(error) => {
+                        if let Some(why) = unreadable(&error) {
+                            eprintln!("speaker: {why}; reading stops here and the unit ends");
+                        }
+                        break;
+                    }
                 };
                 if queue.send(item).is_err() {
                     break;
@@ -5830,7 +6162,7 @@ impl<W: Write> Transport for StdioTransport<W> {
 
 Run: `cargo test -p speaker --lib`
 
-Expected: `test result: ok. 5 passed`.
+Expected: `test result: ok. 8 passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -6532,7 +6864,7 @@ pub enum Stopped {
     Halt,
     /// `unit/abandon` was received and answered.
     Abandon,
-    /// The control plane closed its end.
+    /// The control plane closed its end, or sent a line that cannot be read.
     Closed,
 }
 
@@ -6794,7 +7126,7 @@ cargo test -p speaker --features testkit --test contract_speaker
 cargo test -p speaker --lib
 ```
 
-Expected: `test result: ok. 14 passed`, then `test result: ok. 5 passed`.
+Expected: `test result: ok. 14 passed`, then `test result: ok. 8 passed`.
 
 - [ ] **Step 6: Lock the contract test**
 
@@ -6844,9 +7176,11 @@ then `pub mod harness;`. Create `crates/cli/src/harness.rs` with only its tests:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use harness_protocol::monitor::{Inbound, ProtocolMonitor};
     use harness_protocol::{method, InitializeResult, MessageKind, Network, PROTOCOL_VERSION};
     use serde_json::{json, Value};
     use speaker::testkit::{gate_requested, initialize, order_v01, stage_started, ScriptedPeer};
+    use workspace::fake::FAKE_HEAD_SHA;
 
     const OK: ExitCode = ExitCode::SUCCESS;
 
@@ -7081,7 +7415,94 @@ mod tests {
         );
         let result = peer.result().unwrap();
         assert_eq!(result.outcome, Outcome::NoChange);
-        assert!(result.evidence.is_none() && result.failure.is_none() && result.stop.is_none());
+        assert!(result.failure.is_none() && result.stop.is_none());
+    }
+
+    #[test]
+    fn no_change_carries_evidence_that_names_the_commit_holding_the_frozen_tests() {
+        let peer = ScriptedPeer::starting(order_v01("t1", 1));
+        assert_eq!(run(&peer, r#"{"checks": ["empty_diff"]}"#), OK);
+        let freeze = freeze_of(&peer);
+        let evidence = peer
+            .result()
+            .unwrap()
+            .evidence
+            .expect("the protocol requires evidence with no_change");
+        assert_eq!(evidence.branch, "agent/unit-1");
+        assert_eq!(evidence.head_sha, FAKE_HEAD_SHA);
+        assert!(matches!(
+            &evidence.delivery,
+            DeliveryEvidence::Bundle { bundle_path } if bundle_path.ends_with("unit-1.bundle")
+        ));
+        assert_eq!(
+            evidence.oracle_hash,
+            Some(bundle_hash(&freeze.frozen_files))
+        );
+        assert_eq!(
+            evidence.test_report.unwrap().ids_passed,
+            vec!["scripted_ac1::ac1_holds", "holdout_ac1::ac1_holds"]
+        );
+        assert!(evidence.controls.is_empty(), "no diff, so no control ran");
+        assert_eq!(
+            evidence.review, None,
+            "nothing was built, so nothing was reviewed"
+        );
+    }
+
+    /// Everything the harness sent after its `initialize` reply, as judged by the protocol's
+    /// own monitor: the one the control plane and the conformance kit use. Panics on the first
+    /// message the monitor calls a violation.
+    fn monitored(peer: &ScriptedPeer) -> Vec<Inbound> {
+        let sent = peer.sent();
+        let hello: InitializeResult = sent[0].result_as().unwrap();
+        let mut monitor = ProtocolMonitor::new(hello.capabilities, 2);
+        sent[1..]
+            .iter()
+            .map(|message| {
+                monitor
+                    .on_line(Ok(message.clone()))
+                    .unwrap_or_else(|violation| panic!("{violation:?}: {message:?}"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_way_a_unit_ends_is_legal_to_the_protocols_own_monitor() {
+        let stop = r#"{"stop": {"stage": "check", "reason": "check_unrunnable", "detail": "x"}}"#;
+        let fail = r#"{"fail": {"stage": "review", "detail": "x"}}"#;
+        let endings = [
+            ("t1", true, "{}", Outcome::PrOpen),
+            ("t2", true, "{}", Outcome::PrOpen),
+            ("t3", false, "{}", Outcome::Failed),
+            (
+                "t1",
+                true,
+                r#"{"checks": ["failed", "passed"], "reviews": [1, 0]}"#,
+                Outcome::PrOpen,
+            ),
+            (
+                "t1",
+                true,
+                r#"{"checks": ["empty_diff"]}"#,
+                Outcome::NoChange,
+            ),
+            ("t2", true, stop, Outcome::NeedsHuman),
+            ("t1", true, fail, Outcome::Failed),
+        ];
+        for (tier, approve, scenario, outcome) in endings {
+            let peer = ScriptedPeer::starting(order_v01(tier, 1)).answer_gates(approve);
+            assert_eq!(run(&peer, scenario), OK);
+            let judged = monitored(&peer);
+            assert_eq!(
+                judged.first(),
+                Some(&Inbound::StartAck),
+                "unit/start is answered before anything else is sent"
+            );
+            assert!(
+                matches!(judged.last(), Some(Inbound::Result(r)) if r.outcome == outcome),
+                "{tier} {scenario} should end {outcome:?}"
+            );
+        }
     }
 
     #[test]
@@ -7635,6 +8056,19 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Evidence for `no_change`. The protocol requires it: `branch` and `head_sha` name the
+    /// commit that holds the frozen tests the harness wrote, which the control plane then runs
+    /// against the base itself. Nothing was built, so no control judged a diff and no review
+    /// took place.
+    fn frozen_evidence(&self) -> Evidence {
+        Evidence {
+            controls: Vec::new(),
+            review: None,
+            ..self.evidence(0)
+        }
+    }
+
+    /// Evidence for a change that is handed over (`pr_open`).
     fn evidence(&self, rounds: u32) -> Evidence {
         let mut ids_passed = self.visible_ids.clone();
         ids_passed.extend(self.holdout_ids.iter().cloned());
@@ -7681,7 +8115,10 @@ impl<'a> Run<'a> {
                 evidence: Some(self.evidence(rounds)),
                 ..blank(Outcome::PrOpen)
             },
-            Finish::NoChange => blank(Outcome::NoChange),
+            Finish::NoChange => UnitResult {
+                evidence: Some(self.frozen_evidence()),
+                ..blank(Outcome::NoChange)
+            },
             Finish::NeedsHuman(_) => UnitResult {
                 stop: self.stop.clone(),
                 ..blank(Outcome::NeedsHuman)
@@ -7815,7 +8252,7 @@ pub fn drive<T: Transport>(transport: T, scenario: Scenario, root: PathBuf) -> E
 
 Run: `cargo test -p cli --lib`
 
-Expected: `test result: ok. 27 passed` (26 in `harness`, and the scaffold's one).
+Expected: `test result: ok. 29 passed` (28 in `harness`, and the scaffold's one).
 
 - [ ] **Step 5: Commit**
 
@@ -7941,10 +8378,12 @@ impl Harness {
     }
 
     fn write(&mut self, text: &str) {
+        self.write_bytes(text.as_bytes());
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
         let stdin = self.stdin.as_mut().expect("stdin is still open");
-        stdin
-            .write_all(text.as_bytes())
-            .expect("the harness reads its stdin");
+        stdin.write_all(bytes).expect("the harness reads its stdin");
         stdin.flush().expect("the harness reads its stdin");
     }
 
@@ -8117,6 +8556,35 @@ fn closing_stdin_mid_unit_ends_the_process_without_a_result() {
 }
 
 #[test]
+fn a_line_that_is_not_utf8_ends_the_unit_without_a_result_and_says_why() {
+    // The control plane sent bytes that cannot be read. That line might have been an abandon,
+    // so the harness does not skip it and carry on: it stops reading, says why on stderr, and
+    // ends the unit exactly as it does when stdin closes. Stdin is still open throughout.
+    let scenario = Scratch::file("garbled.json", br#"{"step_ms": 300}"#);
+    let mut harness = Harness::spawn(&["harness", "--fake", "--scenario", scenario.path()]);
+    harness.write(&handshake("t1"));
+    let mut seen = Vec::new();
+    while seen.len() < 3 {
+        seen.push(
+            harness
+                .next()
+                .expect("the handshake replies and a first event"),
+        );
+    }
+    harness.write_bytes(b"{\"jsonrpc\":\"2.0\",\"method\":\"\xff\xfe\"}\n");
+    seen.extend(harness.rest());
+    assert!(result_of(&seen).is_none());
+    assert_eq!(harness.exit().code(), Some(0));
+    assert!(
+        harness.stdin.is_some(),
+        "it stopped because of the line, not because stdin closed"
+    );
+    assert!(harness
+        .stderr()
+        .contains("a line from the control plane is not UTF-8"));
+}
+
+#[test]
 fn halt_mid_unit_is_acknowledged_and_the_process_exits_without_a_result() {
     let scenario = Scratch::file("halt.json", br#"{"step_ms": 300}"#);
     let mut harness = Harness::spawn(&["harness", "--fake", "--scenario", scenario.path()]);
@@ -8234,9 +8702,9 @@ cargo test -p cli --features testkit --test contract_harness_process
 cargo test -p cli --lib tests::
 ```
 
-Expected: the first compiles and reports `1 passed; 7 failed`: the binary still refuses every
+Expected: the first compiles and reports `1 passed; 8 failed`: the binary still refuses every
 command, so only `an_unusable_scenario_is_a_usage_error_before_the_handshake` passes. The
-second reports `tests::version_and_help_succeed ... FAILED` (`29 passed; 1 failed`).
+second reports `tests::version_and_help_succeed ... FAILED` (`31 passed; 1 failed`).
 
 - [ ] **Step 3: Write the command**
 
@@ -8378,7 +8846,7 @@ cargo test -p cli --lib
 cargo test -p cli --features testkit --test contract_harness_process
 ```
 
-Expected: `test result: ok. 33 passed`, then `test result: ok. 8 passed`.
+Expected: `test result: ok. 35 passed`, then `test result: ok. 9 passed`.
 
 - [ ] **Step 5: See it run**
 
@@ -8592,8 +9060,8 @@ for the two preset names. Owner action A7 for Task 3. Owner action A8 for Task 4
 
 ```bash
 git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add \
-  /d/MajorProjects/.swarm-wt/m0-rd-sandbox -b feat/m0-repo-config origin/factory/m0
+git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-repo-config \
+  /d/MajorProjects/.swarm-wt/m0-rd-sandbox origin/factory/m0
 cd /d/MajorProjects/.swarm-wt/m0-rd-sandbox
 grep -n "repo-config.md" README.md
 ```
@@ -8720,7 +9188,7 @@ Expected: the static tier passes; the pull request opens. Do not merge.
 ```bash
 gh repo clone adbarc92/command-center-agent-sandbox /d/MajorProjects/.swarm-wt/m0-rd-sandbox-node
 cd /d/MajorProjects/.swarm-wt/m0-rd-sandbox-node
-git checkout -b feat/onboard-reqdrive
+git checkout --no-track -b feat/onboard-reqdrive
 git ls-files
 cat package.json
 ```
@@ -8864,7 +9332,7 @@ only a README):
 gh repo view adbarc92/command-center-agent-sandbox-cargo --json name,visibility
 gh repo clone adbarc92/command-center-agent-sandbox-cargo /d/MajorProjects/.swarm-wt/m0-rd-sandbox-cargo
 cd /d/MajorProjects/.swarm-wt/m0-rd-sandbox-cargo
-git checkout -b feat/onboard-reqdrive
+git checkout --no-track -b feat/onboard-reqdrive
 ```
 
 Expected: the repository exists and is private. If `gh repo view` fails, owner action A7 has
@@ -9087,28 +9555,44 @@ and open its own pull request against `factory/m0`.
 
 ## Self-review
 
-What was actually checked while this plan was written, and what could not be.
+What was actually checked while this plan was written and revised, and what could not be.
 
 **Run, with the result seen.**
 
 - [x] Every Rust file in this plan was written into a scratch workspace and built with Rust
       1.93.1 on Windows 11, in two states: after lane RD-COORD, and after lane RD-SKEL.
+- [x] **Against the real contract crates.** The first draft was compiled against a stand-in.
+      This revision was compiled and tested against `harness-protocol`, `factory-spec` and
+      `factory-presets` as the control plane's milestone 0 plans build them, pinned through a
+      local repository carrying the tag `contracts-v0.2.0`. That found one compile error (the
+      reader's two new errors, `InvalidUtf8` and `LineTooLong`) and one protocol fault (a
+      `no_change` result with no evidence, which the protocol's monitor refuses). Both are
+      fixed here, each with a test. Nothing else in lanes RD-COORD or RD-SKEL needed changing:
+      once the reader was fixed, the whole workspace built clippy-clean with warnings denied
+      and every existing test passed.
 - [x] RD-COORD state: `cargo xtask test static` passed (`deps: OK (11 crates, 31 source
-      files)`, `parity: OK (4 gates, 0 Forms)`); `unit` passed (37 in `xtask`, 1 in `cli`);
+      files)`, `parity: OK (4 gates, 0 Forms)`); `unit` passed (40 in `xtask`, 1 in `cli`);
       `contract`, `integration`, `e2e` and `live` printed `no tests in this tier yet`.
 - [x] The `xtask` build-up of RD-COORD Tasks 2 to 8 was replayed one module at a time: at every
       step the crate was format-clean, clippy-clean with warnings denied, and its tests passed
-      (3, 6, 14, 24, 31, 35, 37).
-- [x] RD-SKEL state: `unit` passed (`cli` 33, `engine` 8, `runtime` 6, `speaker` 5,
-      `workspace` 4, `xtask` 37); the three contract files passed (8, 5, 14); `static` passed
-      with the worked-example Form and its five rows registered (`parity: OK (9 gates, 1 Forms)`).
+      (4, 7, 15, 25, 33, 37, 40).
+- [x] RD-SKEL state, against the real contract crates: `static` passed (`deps: OK (11 crates,
+      38 source files)`, `parity: OK (9 gates, 1 Forms)` with the worked-example Form and its
+      five rows); `unit` passed (`cli` 35, `engine` 8, `runtime` 6, `speaker` 8, `workspace` 4,
+      `xtask` 40); the three contract files passed (9, 5, 14).
 - [x] The intermediate states of RD-SKEL Tasks 7 and 8 were built: the driver without the
-      command compiles clean and passes 27 tests; before the command exists the process tests
-      report `1 passed; 7 failed`, as Task 8 step 2 says.
+      command compiles clean and passes 29 tests; before the command exists the process tests
+      report `1 passed; 8 failed`, as Task 8 step 2 says.
+- [x] Every way the skeleton ends a unit (`pr_open` at T1 and T2, a rejected gate, a failed
+      check and a blocked review before `pr_open`, `no_change`, `needs_human`, `failed`) was
+      replayed through the real `ProtocolMonitor` without a violation. With the `no_change`
+      evidence removed again, that test fails with `InvalidResult("no_change without
+      evidence")`.
 - [x] The conformance kit path was run end to end: `cargo install --git … --tag
       contracts-v0.2.0 harness-conformance --bin harness-conformance --locked --root .kit/…`,
       then the kit against `reqdrive harness --fake`: `6 passed, 0 skipped, 0 failed`, and the
-      cached kit reused on a second run.
+      cached kit reused on a second run. The kit was the 0.1 kit's six cases rebuilt against the
+      real protocol crate (see below).
 - [x] Review Focus 1 was checked by mutation: with the inbound queue bounded, the flood test
       fails after its time limit with its deadlock message; unbounded, it passes.
 - [x] The archive move of RD-COORD Task 1 was rehearsed on a copy of `origin/main`: 103 files
@@ -9124,29 +9608,36 @@ What was actually checked while this plan was written, and what could not be.
       none outside this sentence.
 - [x] Every type, function and file name used in a later task is defined in an earlier one,
       with the same spelling; the Interfaces blocks were written from the compiled code.
+- [x] Every line of every source file that was compiled appears in this plan: the listings were
+      assembled from those files by a script and checked against them afterwards.
 
-**Not run, or run against a stand-in. Treat each as unverified.**
+**Still unverified.**
 
-- The contract crates at `contracts-v0.2.0` do not exist yet. Everything was compiled against a
-  stand-in: the 0.1 crates with the additions the program's type list names. A field, derive
-  or spelling that differs at the real tag will stop RD-SKEL at Task 1 or shortly after; the
-  plan says to stop and report, not to adapt.
-- The kit that was run is the 0.1 kit rebuilt against that stand-in: six cases. The kit at the
-  tag may check more (for example, with a work-order override).
-- The `cargo install` line was run against a local repository carrying that tag, not against
+- **Nothing was run on Linux.** Every result above is from Windows.
+- **The CI workflow has never executed**, and its YAML was not linted.
+- **The tag itself.** `contracts-v0.2.0` does not exist on GitHub yet. The crates this was
+  built against are the ones the control plane's milestone 0 plans produce, in a scratch
+  copy; what is finally tagged could still differ. RD-SKEL Task 1 is where that would show,
+  and the plan says to stop and report.
+- **The conformance kit at the tag.** The kit that was run is the 0.1 kit's six cases, rebuilt
+  against the real protocol crate. The kit the control plane's plans build for 0.2 checks more
+  (among them: a mismatched minor version is refused, `unit/start` is answered before anything
+  else, and every result carries what its outcome requires). The skeleton has its own tests
+  for each of those, and its transcripts pass the real protocol monitor that the 0.2 kit is
+  built on, but that kit itself was not run.
+- The `cargo install` line was run against a local repository carrying the tag, not against
   GitHub.
-- Nothing was run on Linux. The CI workflow has never executed; its YAML was not linted.
 - `cargo metadata`'s `source` string for a tagged git dependency was seen as
   `git+<url>?tag=<tag>` on cargo 1.93.1; the code also accepts a trailing `#<commit>`.
 - The expected failure messages of the "watch it fail" steps were observed for the `xtask`
-  chain's final state, the process tests and the flood mutation. For the other steps they are
-  stated as the names the compiler will report missing, which is certain, not as exact text.
+  chain's final state, the process tests, the monitor test and the flood mutation. For the
+  other steps they are stated as the names the compiler will report missing, which is
+  certain, not as exact text.
 - cargo-nextest is not installed here: the `cargo` sandbox's test command and its report path
   are unverified. No command was run inside either container image.
-- The milestone 1 harness plan does not exist yet, so RD-FORMS Task 2 is a procedure, not
-  content, and the fit between that plan's `speaker` blocks and this plan's is unknown.
-- Whether the control plane's supervisor at 0.2 accepts a `stage` event before `provisioned`
-  is not known. This plan avoids the question by sending `provisioned` first.
+- The fit between the milestone 1 harness plan's `speaker` blocks and this plan's was not
+  re-checked after this revision. That plan builds on `Stopped` having exactly three variants
+  and on the four `EXIT_*` constants; this revision changes neither.
 
 **Choices a reviewer may want to overturn.**
 
@@ -9155,6 +9646,19 @@ What was actually checked while this plan was written, and what could not be.
 - `reqdrive harness` needs `--fake` and refuses without it, so that the command line says which
   implementations were chosen. The conformance invocation is therefore
   `… -- <reqdrive> harness --fake`.
+- **An unreadable line ends the unit quietly.** After a line that is not UTF-8 or is too long,
+  the harness stops reading and the unit ends as for a closed stdin: no result, exit code 0,
+  and the reason on stderr only. The alternative is a `failed` result and a non-zero exit. It
+  was not chosen because it needs a fourth `Stopped` variant or a fifth exit code, and
+  milestone 1's plan is written against three and four.
+- **A line that is readable text but not a message is still dropped**, not fatal. The same
+  argument that makes an undecodable line fatal (it might have been an abandon) applies to it
+  too. It was left alone because it was not part of this correction and milestone 1's plan was
+  written on the present behaviour; the owner may want the two cases to agree.
+- **`characterisation_*.rs` runs in the `unit` tier**, with the crate's own tests, as the
+  program's rule says. The control plane's scaffold plan, as written, places those targets in
+  `integration`. This repository has no such file, so nothing here depends on which is right,
+  but the two `xtask`s should agree before either repository gains one.
 - The parity check is an `xtask` subcommand in Rust, not a shell script, so it runs the same on
   Windows and Linux with nothing else installed.
 - The old `archive/` folder moved inside `archive/bash-v0.3/`, making the archive a whole
