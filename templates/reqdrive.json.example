@@ -8,7 +8,7 @@
   "prLabels": ["agent-generated"],
   "projectName": "My Project",
   "completionHook": "",
-  "reviewCommand": "",
+  "reviewCommand": "builtin",
   "policy": {
     "riskTiers": {
       "high": ["src/auth", "src/payments"],
