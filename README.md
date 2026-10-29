@@ -27,7 +27,7 @@ Uses a two-phase architecture: planning (PRD generation) followed by determinist
 ## Installation
 
 ```bash
-git clone https://github.com/user/reqdrive.git ~/.reqdrive
+git clone https://github.com/adbarc92/reqdrive.git ~/.reqdrive
 echo 'export PATH="$HOME/.reqdrive/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```

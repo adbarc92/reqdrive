@@ -48,7 +48,6 @@ External: GitHub Actions `ubuntu-latest`, `actions/checkout@v4`, apt
 - `tests/oracle.lock.json` records `environment.claude: true`, but CI installs no `claude` and the gate never reads the `environment` field — the lock was generated where it is not enforced, contradicting design decision D8. (tests/oracle-gate.sh:64,69) → [drift DES-008](../requirements/drift-report.md#DES-008)
 - `scripts/setup-validation-env.sh` would fail at runtime: it copies `templates/prompt.md.tpl` (:212, gone), sources `lib/prd-gen.sh`/`agent-run.sh`/`verify.sh` (:262,270,275, all archived), calls `reqdrive_load_config_path` (:299, undefined), and emits a v0.1.x manifest. It passes `bash -n` — the rot is semantic, so extending CI's syntax check would **not** catch it. → [drift CLD-099](../requirements/drift-report.md#CLD-099)
 - `scripts/**` is invisible to both the shellcheck list (:29) and the `bash -n` job (:37-44).
-- `install.sh` clones `https://github.com/user/reqdrive.git` — a literal placeholder matching README.md:30. (install.sh:25)
 - `install.sh` demands `claude` before installing anything, inverting the CLI's own deliberate deferral. (install.sh:12 vs bin/reqdrive:26-39)
 - `reqdrive launch` never calls `check_claude`; the detached child does, so the dependency error lands in `output.log` while `launch` exits 0 reporting success. (bin/reqdrive:588,641)
 - The e2e skip assertion runs bats a third time and pipes into `grep`, so an empty bats output makes the check pass vacuously. (.github/workflows/ci.yml:69-75)
