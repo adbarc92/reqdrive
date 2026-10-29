@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # reqdrive installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/user/reqdrive/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/adbarc92/reqdrive/main/install.sh | bash
 
 set -euo pipefail
 
@@ -22,7 +22,7 @@ if [ -d "$INSTALL_DIR" ]; then
   cd "$INSTALL_DIR" && git pull --ff-only
 else
   echo "Cloning reqdrive..."
-  git clone https://github.com/user/reqdrive.git "$INSTALL_DIR"
+  git clone https://github.com/adbarc92/reqdrive.git "$INSTALL_DIR"
 fi
 
 # Make scripts executable
