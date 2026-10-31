@@ -6,7 +6,9 @@ session log below it is appended newest first.
 ## State summary
 
 - **TL;DR:** the Rust story harness (`reqdrive story <work-order.json>`) is built and tested
-  offline against a fake agent. The final whole-branch review is done and its findings are fixed.
+  offline against a fake agent. The final whole-branch review is done, its findings are fixed,
+  and a scoped re-review confirmed every fix. One older Windows issue (handle inheritance) is on
+  the roadmap.
   The live check against the real `claude` CLI has not run: it waits for the owner's go-ahead.
 - **Branch:** `feat/story-harness-rust`, not merged. No pull request is open yet.
 - **Readiness:** the three checks (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
