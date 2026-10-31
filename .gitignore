@@ -3,3 +3,4 @@
 
 # Legacy agent state directory
 .reqdrive/agent/
+/target
