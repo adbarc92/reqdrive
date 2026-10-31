@@ -5,6 +5,7 @@ mod common;
 use common::*;
 use serde_json::{json, Value};
 use std::fs;
+use std::time::Duration;
 
 fn defective_text() -> String {
     "The test is wrong.\n\n```json:iteration-summary\n\
@@ -291,4 +292,28 @@ fn heartbeat_emitted_while_agent_sleeps() {
     assert!(events
         .iter()
         .any(|e| e["type"] == "heartbeat" && e["waiting_on"] == "agent"));
+}
+
+#[test]
+fn orphan_holding_agent_stdout_does_not_hang_the_run() {
+    let f = Fixture::new();
+    // The red call exits but leaves a process holding its stdout open for 30 s.
+    let mut red = red_ok();
+    red["orphan_sleep_ms"] = json!(30_000);
+    let running = f.spawn(&f.order(), &script(vec![red, green_ok()]));
+    let (events, code, took) = running.wait(Duration::from_secs(20));
+    assert_eq!(code, 0);
+    // The reader is waited for max(grace, 1 s) after the agent exits.
+    assert!(took < Duration::from_secs(12), "took {took:?}");
+    let r = result(&events);
+    assert_eq!(r["outcome"], "pushed", "{r}");
+    assert!(
+        events.iter().any(|e| e["type"] == "error"
+            && e["category"] == "usage_incomplete"
+            && e["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("agent stdout still open after exit")),
+        "{events:?}"
+    );
 }

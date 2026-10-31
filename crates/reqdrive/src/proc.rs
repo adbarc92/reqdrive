@@ -15,6 +15,26 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 const POLL: Duration = Duration::from_millis(100);
 const TAIL_BYTES: u64 = 2048;
 const DEFAULT_GRACE_MS: u64 = 30_000;
+/// The largest `REQDRIVE_GRACE_MS` (and `REQDRIVE_HEARTBEAT_MS`) honoured: one hour.
+pub const MAX_ENV_MS: u64 = 3_600_000;
+
+/// Env vars that point git at a repository other than the workspace. Every child the harness
+/// starts (git, the agent, the test command) runs without them.
+pub const REPO_ENV: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+/// Removes [`REPO_ENV`] from `cmd`'s environment.
+pub fn scrub_repo_env(cmd: &mut Command) {
+    for name in REPO_ENV {
+        cmd.env_remove(name);
+    }
+}
 
 /// Sets [`interrupted`] on SIGINT/SIGTERM (Ctrl-C on Windows). Safe to call more than once.
 pub fn install_signal_handler() -> Result<(), String> {
@@ -26,6 +46,12 @@ pub fn install_signal_handler() -> Result<(), String> {
 
 pub fn interrupted() -> bool {
     INTERRUPTED.load(Ordering::SeqCst)
+}
+
+/// Asks the run to stop as if it were interrupted, for example because the orchestrator stopped
+/// reading the event stream. [`interrupted`] reports it.
+pub fn request_stop() {
+    INTERRUPTED.store(true, Ordering::SeqCst);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +81,8 @@ pub fn spawn_grouped(cmd: &mut Command) -> io::Result<Child> {
 
 /// Waits for `child`, polling every 100 ms. On the deadline, an interrupt or `over_budget()`,
 /// it interrupts the child once and records the first reason; `grace` later it kills the
-/// group and waits. A child that exits before any trigger ended `Normal`.
+/// group and waits. A child that exits before any trigger ended `Normal`. Once the leader has
+/// exited, for any reason, anything left in its group is killed at once (on Unix).
 pub fn supervise(
     child: &mut Child,
     deadline: Instant,
@@ -65,12 +92,10 @@ pub fn supervise(
     let mut stopping: Option<(EndedBy, Instant)> = None;
     loop {
         if let Some(status) = child.try_wait()? {
+            // The leader is gone; sweep anything left in its group.
+            kill_all(child);
             let ended_by = match stopping {
-                Some((why, _)) => {
-                    // The leader is gone; sweep anything left in its group.
-                    kill_all(child);
-                    why
-                }
+                Some((why, _)) => why,
                 None => EndedBy::Normal,
             };
             return Ok(Exit {
@@ -123,17 +148,21 @@ fn interrupt(child: &mut Child) {
     let _ = child.kill();
 }
 
+/// Kills the child's whole group on Unix, and the child itself everywhere. Harmless once the
+/// child has been waited for.
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn kill_all(child: &mut Child) {
+pub fn kill_all(child: &mut Child) {
     // SAFETY: as in `interrupt`.
     unsafe {
         libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
     }
+    let _ = child.kill();
 }
 
+/// Kills the child. Only the direct child can be killed on Windows.
 #[cfg(windows)]
-fn kill_all(child: &mut Child) {
+pub fn kill_all(child: &mut Child) {
     let _ = child.kill();
 }
 
@@ -153,6 +182,7 @@ pub fn shell(cmdline: &str) -> Command {
         c
     };
     cmd.env("CI", "true");
+    scrub_repo_env(&mut cmd);
     cmd
 }
 
@@ -206,11 +236,12 @@ fn tail(path: &Path) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&buf[start..]).into_owned())
 }
 
-/// `REQDRIVE_GRACE_MS`, default 30 000 ms.
+/// `REQDRIVE_GRACE_MS`, default 30 000 ms, at most [`MAX_ENV_MS`].
 pub fn grace_from_env() -> Duration {
     let ms = std::env::var("REQDRIVE_GRACE_MS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_GRACE_MS);
+        .unwrap_or(DEFAULT_GRACE_MS)
+        .min(MAX_ENV_MS);
     Duration::from_millis(ms)
 }

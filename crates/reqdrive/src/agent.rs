@@ -4,14 +4,19 @@ use crate::events::{Emitter, Event};
 use crate::limits::Limits;
 use crate::outcome::Category;
 use crate::policy::Choice;
-use crate::proc::{spawn_grouped, supervise, Exit};
+use crate::proc::{kill_all, scrub_repo_env, spawn_grouped, supervise, Exit};
 use crate::stream::{budget_tokens, FinalResult, StreamParser};
 use crate::workorder::{Isolation, WorkOrder};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// The least time the stdout reader is given to finish after the agent exits.
+const READER_WAIT_MIN: Duration = Duration::from_secs(1);
+const READER_POLL: Duration = Duration::from_millis(10);
 
 pub struct ClaudeCode {
     pub bin: PathBuf,
@@ -83,7 +88,7 @@ impl ClaudeCode {
         prompt: &str,
         max_turns: u32,
         first_call_seq: u64,
-        limits: &Limits,
+        limits: &Arc<Limits>,
         emitter: &Emitter,
         grace: Duration,
     ) -> io::Result<CallOutcome> {
@@ -99,6 +104,7 @@ impl ClaudeCode {
             .stderr(File::create(
                 state_dir.join(format!("call-{index}.stderr.log")),
             )?);
+        scrub_repo_env(&mut cmd);
         for name in &self.choice.remove_env {
             cmd.env_remove(name);
         }
@@ -113,26 +119,63 @@ impl ClaudeCode {
 
         let mut child = spawn_grouped(&mut cmd)?;
         let stdout = child.stdout.take().expect("stdout is piped");
-        let parser = StreamParser::new(first_call_seq, self.choice.provider_label.clone());
+        // The reader owns the parser only through this slot. Whoever takes the parser out
+        // stops the reader feeding it, so a reader stuck on a pipe some leftover process
+        // still holds can be abandoned without losing what it already read.
+        let slot = Arc::new(Mutex::new(Some(StreamParser::new(
+            first_call_seq,
+            self.choice.provider_label.clone(),
+        ))));
+        let reader = {
+            let (slot, limits, emitter) = (slot.clone(), limits.clone(), emitter.clone());
+            std::thread::spawn(move || read_stream(stdout, transcript, &slot, &limits, &emitter))
+        };
+        let exit = supervise(
+            &mut child,
+            limits.deadline(),
+            &|| limits.tokens_exhausted(),
+            grace,
+        );
+        if exit.is_err() {
+            kill_all(&mut child);
+            let _ = child.wait();
+        }
 
-        let (exit, summary) = std::thread::scope(|s| {
-            let reader = s.spawn(move || read_stream(stdout, transcript, parser, limits, emitter));
-            let exit = supervise(
-                &mut child,
-                limits.deadline(),
-                &|| limits.tokens_exhausted(),
-                grace,
-            );
-            let parser = reader.join().expect("reader thread panicked");
-            (exit, parser.finish())
-        });
-        let exit = exit?;
+        // The agent has exited. Its stdout reaches EOF unless something it started still
+        // holds the pipe; give the reader `grace` (at least 1 s) to finish, then stop waiting.
+        let until = Instant::now() + grace.max(READER_WAIT_MIN);
+        while !reader.is_finished() && Instant::now() < until {
+            std::thread::sleep(READER_POLL);
+        }
+        let mut incomplete: Vec<String> = Vec::new();
+        if reader.is_finished() {
+            if reader.join().is_err() {
+                incomplete.push(format!(
+                    "call {index}: the agent stdout reader panicked; usage may be incomplete"
+                ));
+            }
+        } else {
+            incomplete.push(format!(
+                "call {index}: agent stdout still open after exit; stopped reading it, so usage \
+                 may be incomplete"
+            ));
+        }
+        let parser = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let summary = parser.map(StreamParser::finish);
 
-        for row in summary.flushed.iter().chain(summary.residue.iter()) {
+        for row in summary
+            .iter()
+            .flat_map(|s| s.flushed.iter().chain(s.residue.iter()))
+        {
             limits.add_tokens(budget_tokens(row));
             let _ = emitter.emit(Event::Usage(row.clone()));
         }
-        if summary.final_result.is_none() {
+        for detail in incomplete {
+            let _ = emitter.error(Category::UsageIncomplete, detail);
+        }
+        let exit = exit?;
+        let final_result = summary.as_ref().and_then(|s| s.final_result.clone());
+        if final_result.is_none() {
             let _ = emitter.error(
                 Category::UsageIncomplete,
                 format!("call {index} ended without a result line; usage may be incomplete"),
@@ -140,20 +183,21 @@ impl ClaudeCode {
         }
         Ok(CallOutcome {
             exit,
-            final_result: summary.final_result,
-            next_call_seq: summary.next_call_seq,
+            final_result,
+            next_call_seq: summary.map_or(first_call_seq, |s| s.next_call_seq),
         })
     }
 }
 
 /// Reads the agent's stdout to EOF: logs each line, feeds the parser, and meters each row.
+/// Stops as soon as the parser has been taken out of `slot`.
 fn read_stream(
     stdout: impl io::Read,
     mut transcript: File,
-    mut parser: StreamParser,
+    slot: &Mutex<Option<StreamParser>>,
     limits: &Limits,
     emitter: &Emitter,
-) -> StreamParser {
+) {
     let mut reader = BufReader::new(stdout);
     let mut buf = Vec::new();
     loop {
@@ -162,6 +206,10 @@ fn read_stream(
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
+        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(parser) = guard.as_mut() else {
+            break;
+        };
         let text = String::from_utf8_lossy(&buf);
         let line = text.trim_end_matches(['\n', '\r']);
         let _ = writeln!(transcript, "{line}");
@@ -170,7 +218,6 @@ fn read_stream(
             let _ = emitter.emit(Event::Usage(row));
         }
     }
-    parser
 }
 
 pub fn bin_from_env() -> PathBuf {

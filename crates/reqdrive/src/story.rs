@@ -404,7 +404,7 @@ fn validate(
 
     let agent = ClaudeCode::new(&wo, choice, env.claude_bin.clone(), &test_command);
     Ok(Driver {
-        limits: Limits::new(&wo.limits, start),
+        limits: Arc::new(Limits::new(&wo.limits, start)),
         rules: PathRules::from_order(&wo),
         wo,
         emitter: emitter.clone(),
@@ -437,7 +437,7 @@ struct Driver {
     emitter: Emitter,
     env: Env,
     git: Git,
-    limits: Limits,
+    limits: Arc<Limits>,
     rules: PathRules,
     ws: PathBuf,
     state_dir: PathBuf,
@@ -705,11 +705,12 @@ impl Driver {
                 self.env.grace,
             )
         };
+        // Before the exit is judged, and even when the call could not be supervised, so a
+        // limit or an error cannot leave the agent's commits.
+        self.check_head(&expected, label)?;
         let out = called
             .map_err(|e| self.harness_error(format!("agent call {index} could not run: {e}")))?;
         self.next_call_seq = out.next_call_seq;
-        // Before the exit is judged, so a limit or an error cannot leave the agent's commits.
-        self.check_head(&expected, label)?;
         match out.exit.ended_by {
             EndedBy::Deadline => {
                 return Err(self.end(

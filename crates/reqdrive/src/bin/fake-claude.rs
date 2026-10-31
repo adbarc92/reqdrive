@@ -4,6 +4,8 @@
 //!   under `<dir>` must hold (the file exists, relative to the current directory, and contains
 //!   the needle). Exit 0 if all hold, 1 otherwise.
 //! - `fake-claude spew <bytes>`: prints that many bytes of text and exits 0.
+//! - `fake-claude hold <ms>`: sleeps that long and exits 0. A call's `orphan_sleep_ms` starts
+//!   one in the background, holding the call's stdout open after the call exits.
 //! - Otherwise it acts as `claude`, driven by the JSON script `$FAKE_CLAUDE_SCRIPT`
 //!   (`{"calls":[…]}`), picking the call from the counter file `$FAKE_CLAUDE_COUNTER` and
 //!   logging its argv to `$FAKE_CLAUDE_LOG`. A call's optional `git_commit_all: "<msg>"` runs
@@ -20,6 +22,11 @@ fn main() {
     let code = match args.first().map(String::as_str) {
         Some("check-tests") => check_tests(args.get(1).map(String::as_str).unwrap_or(".")),
         Some("spew") => spew(args.get(1).and_then(|n| n.parse().ok()).unwrap_or(0)),
+        Some("hold") => {
+            let ms = args.get(1).and_then(|n| n.parse().ok()).unwrap_or(0);
+            std::thread::sleep(Duration::from_millis(ms));
+            0
+        }
         _ => act_as_claude(&args),
     };
     std::process::exit(code);
@@ -78,6 +85,28 @@ fn spew(bytes: usize) -> i32 {
         return 1;
     }
     0
+}
+
+/// Starts `fake-claude hold <ms>` without waiting for it. It inherits our stdout, so the
+/// pipe stays open after we exit. On Unix it leads a process group of its own, as a process
+/// that called `setsid` would, so a sweep of our group does not reach it.
+fn orphan(ms: u64) {
+    let exe = std::env::current_exe().expect("current_exe");
+    let mut cmd = std::process::Command::new(exe);
+    // Not the workspace: a live process's cwd cannot be deleted on Windows.
+    cmd.args(["hold", &ms.to_string()])
+        .current_dir(std::env::temp_dir())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    // Never waited for: we exit at once and the orphan is reparented.
+    #[allow(clippy::zombie_processes)]
+    cmd.spawn().expect("spawn the orphan");
 }
 
 fn act_as_claude(args: &[String]) -> i32 {
@@ -189,6 +218,10 @@ fn act_as_claude(args: &[String]) -> i32 {
         });
         let _ = writeln!(out, "{result}");
         let _ = out.flush();
+    }
+    drop(out);
+    if let Some(ms) = call["orphan_sleep_ms"].as_u64() {
+        orphan(ms);
     }
 
     call["exit"].as_i64().unwrap_or(0) as i32

@@ -4,8 +4,11 @@
 
 use serde_json::{json, Value};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 pub const FAKE: &str = env!("CARGO_BIN_EXE_fake-claude");
@@ -150,16 +153,16 @@ impl Fixture {
     }
 
     /// Writes the order text and the script under `root/harness/` (outside the workspace and
-    /// the state dir), runs `reqdrive story <order>`, and parses its stdout lines.
-    pub fn run_raw(&self, order_text: &str, script: &Value) -> (Vec<Value>, i32) {
+    /// the state dir) and returns the `reqdrive story <order>` command, not yet started.
+    pub fn command(&self, order_text: &str, script: &Value) -> Command {
         let h = self.harness_dir();
         fs::create_dir_all(&h).unwrap();
         let order_path = h.join("order.json");
         let script_path = h.join("script.json");
         fs::write(&order_path, order_text).unwrap();
         fs::write(&script_path, script.to_string()).unwrap();
-        let out = Command::new(REQDRIVE)
-            .arg("story")
+        let mut cmd = Command::new(REQDRIVE);
+        cmd.arg("story")
             .arg(&order_path)
             .env("REQDRIVE_CLAUDE_BIN", FAKE)
             .env("FAKE_CLAUDE_SCRIPT", &script_path)
@@ -167,7 +170,35 @@ impl Fixture {
             .env("FAKE_CLAUDE_LOG", h.join("argv.log"))
             .env("REQDRIVE_HEARTBEAT_MS", "50")
             .env("REQDRIVE_GRACE_MS", "200")
-            .stdin(Stdio::null())
+            .stdin(Stdio::null());
+        cmd
+    }
+
+    /// Starts `reqdrive story` with stdout read line by line on a thread, so a test can bound
+    /// the time to exit even when a leftover process keeps the pipe open.
+    pub fn spawn(&self, order: &Value, script: &Value) -> Running {
+        let mut cmd = self.command(&order.to_string(), script);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        let started = Instant::now();
+        let mut child = cmd.spawn().expect("spawn reqdrive");
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        // Never joined: a leftover process may hold the pipe open past the test.
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Running { child, rx, started }
+    }
+
+    /// Writes the order text and the script under `root/harness/` (outside the workspace and
+    /// the state dir), runs `reqdrive story <order>`, and parses its stdout lines.
+    pub fn run_raw(&self, order_text: &str, script: &Value) -> (Vec<Value>, i32) {
+        let out = self
+            .command(order_text, script)
             .output()
             .expect("run reqdrive");
         // Shown only when a test fails.
@@ -180,6 +211,43 @@ impl Fixture {
             .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad line {l:?}: {e}")))
             .collect();
         (events, out.status.code().unwrap_or(-1))
+    }
+}
+
+/// A `reqdrive story` process started by [`Fixture::spawn`].
+pub struct Running {
+    pub child: Child,
+    rx: Receiver<String>,
+    started: Instant,
+}
+
+impl Running {
+    /// Waits up to `limit` for the process to exit (killing it and panicking past that), then
+    /// collects its stdout lines up to the result. Returns the events, the exit code and how
+    /// long the process ran.
+    pub fn wait(mut self, limit: Duration) -> (Vec<Value>, i32, Duration) {
+        let status = loop {
+            if let Some(s) = self.child.try_wait().unwrap() {
+                break s;
+            }
+            if self.started.elapsed() > limit {
+                let _ = self.child.kill();
+                panic!("reqdrive did not exit within {limit:?}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let took = self.started.elapsed();
+        let mut events: Vec<Value> = Vec::new();
+        while let Ok(line) = self.rx.recv_timeout(Duration::from_secs(5)) {
+            let v: Value =
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("bad line {line:?}: {e}"));
+            let done = v["type"] == "result";
+            events.push(v);
+            if done {
+                break;
+            }
+        }
+        (events, status.code().unwrap_or(-1), took)
     }
 }
 

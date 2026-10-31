@@ -70,20 +70,20 @@ fn adapter(dir: &Path, script: Value) -> ClaudeCode {
     cc
 }
 
-fn limits() -> Limits {
-    Limits::new(
+fn limits() -> Arc<Limits> {
+    Arc::new(Limits::new(
         &LimitsSpec {
             turns: 10,
             wall_clock_secs: 60,
             tokens: 1000,
         },
         Instant::now(),
-    )
+    ))
 }
 
 struct Ran {
     events: Vec<Value>,
-    limits: Limits,
+    limits: Arc<Limits>,
     outcome: reqdrive::agent::CallOutcome,
 }
 
