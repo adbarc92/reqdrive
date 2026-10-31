@@ -151,7 +151,7 @@ fn criteria_block(wo: &WorkOrder) -> String {
     fence(&lines.join("\n"))
 }
 
-/// The title sits on a heading line, so it is not fenced: newlines become spaces and
+/// The title and evidence ids sit on heading lines, so it is not fenced: newlines become spaces and
 /// backtick runs are neutralised the way `fence` does.
 fn title_line(title: &str) -> String {
     neutralise(&title.replace(['\r', '\n'], " "))
@@ -167,7 +167,7 @@ fn evidence_section(wo: &WorkOrder) -> String {
         .map(|e| {
             format!(
                 "### Attempt {}\n{}",
-                e.attempt_id,
+                title_line(&e.attempt_id),
                 fence(&format!("{}\n\n{}", e.summary, e.detail))
             )
         })
@@ -284,10 +284,12 @@ pub fn read_claims(final_text: &str) -> Claims {
         .and_then(|b| serde_json::from_str::<serde_json::Value>(&b).ok())
         .and_then(|v| {
             let d = v.get("testsDefective")?;
-            Some(TestsDefective {
-                test: d.get("test")?.as_str()?.to_string(),
-                reason: d.get("reason")?.as_str()?.to_string(),
-            })
+            let test = d.get("test")?.as_str()?.to_string();
+            let reason = d.get("reason")?.as_str()?.to_string();
+            if test.is_empty() || reason.is_empty() {
+                return None;
+            }
+            Some(TestsDefective { test, reason })
         });
     Claims {
         criteria_map,
@@ -406,6 +408,19 @@ mod tests {
     }
 
     #[test]
+    fn evidence_attempt_id_is_single_line() {
+        let mut w = wo("d");
+        w.failure_evidence.push(FailureEvidence {
+            attempt_id: "x\n## Evil ```".into(),
+            summary: "s".into(),
+            detail: String::new(),
+        });
+        let p = red_prompt(&w, None);
+        assert!(p.contains("### Attempt x ## Evil '''\n"));
+        assert!(!p.lines().any(|l| l.starts_with("## Evil")));
+    }
+
+    #[test]
     fn green_prompt_fills_every_section() {
         let files = vec!["tests/a.rs".to_string(), "tests/b.rs".to_string()];
         let history = vec!["call 1: red".to_string()];
@@ -461,6 +476,12 @@ mod tests {
         assert_eq!(c.tests_defective, None);
         let c = read_claims("```json:criteria-map\n[1]\n```\n```json:criteria-map\n{\"a\": 1");
         assert_eq!(c.criteria_map, None);
+        for (t, r) in [("", "r"), ("t", "")] {
+            let text = format!(
+                "```json:iteration-summary\n{{\"testsDefective\": {{\"test\": \"{t}\", \"reason\": \"{r}\"}}}}\n```\n"
+            );
+            assert_eq!(read_claims(&text).tests_defective, None);
+        }
         assert_eq!(
             read_claims(""),
             Claims {

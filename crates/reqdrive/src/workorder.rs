@@ -127,6 +127,13 @@ pub fn validate_shape(wo: &WorkOrder) -> Result<(), String> {
             ));
         }
     }
+    for (i, e) in wo.failure_evidence.iter().enumerate() {
+        if !valid_id(&e.attempt_id) {
+            return Err(format!(
+                "failure_evidence[{i}].attempt_id must be non-empty and match [A-Za-z0-9._-]+"
+            ));
+        }
+    }
     let bc = &wo.base_commit;
     if bc.len() != 40 || !bc.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         return Err("base_commit must be 40 lowercase hex characters".into());
@@ -262,6 +269,24 @@ mod tests {
     fn shape_rejects_attempt_id() {
         rejects(|v| v["attempt_id"] = "".into(), "attempt_id");
         rejects(|v| v["attempt_id"] = "a b".into(), "attempt_id");
+    }
+
+    #[test]
+    fn shape_rejects_evidence_attempt_id() {
+        for bad in ["", "a b", "x\n## Evil", "a`b"] {
+            rejects(
+                |v| {
+                    v["failure_evidence"] = serde_json::json!([
+                        {"attempt_id": "ok-1", "summary": "s"},
+                        {"attempt_id": bad, "summary": "s"}
+                    ])
+                },
+                "failure_evidence[1].attempt_id",
+            );
+        }
+        let mut v = base();
+        v["failure_evidence"] = serde_json::json!([{"attempt_id": "att.0_1-x", "summary": "s"}]);
+        validate_shape(&parsed(v)).expect("valid evidence id");
     }
 
     #[test]
