@@ -42,12 +42,14 @@ pub struct Env {
 
 impl Env {
     /// `REQDRIVE_CLAUDE_BIN`, `REQDRIVE_HEARTBEAT_MS` (default 30 000) and `REQDRIVE_GRACE_MS`.
+    /// Both intervals are capped at one hour.
     pub fn from_process() -> Env {
         let heartbeat_ms = std::env::var("REQDRIVE_HEARTBEAT_MS")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
             .filter(|ms| *ms > 0)
-            .unwrap_or(DEFAULT_HEARTBEAT_MS);
+            .unwrap_or(DEFAULT_HEARTBEAT_MS)
+            .min(proc::MAX_ENV_MS);
         Env {
             claude_bin: agent::bin_from_env(),
             heartbeat: Duration::from_millis(heartbeat_ms),
@@ -369,6 +371,7 @@ fn validate(
 
     // 8. The test command.
     let test_command = resolve_test_command(&wo, &ws).map_err(invalid)?;
+    workorder::check_allow_rules(&wo, &test_command).map_err(invalid)?;
 
     // 9. The inference policy.
     let choice = policy::choose(&wo.inference)
@@ -567,7 +570,16 @@ impl Driver {
         self.end(Outcome::Failed, Category::HarnessError, detail)
     }
 
+    /// A failed git call: `harness_error`, or `halted/interrupted` when the run was being
+    /// stopped, since an interrupt can be what made git fail.
     fn git_fail(&self, what: &str, e: GitError) -> ResultEvent {
+        if proc::interrupted() {
+            return self.end(
+                Outcome::Halted,
+                Category::Interrupted,
+                format!("interrupted; {what}: {e}"),
+            );
+        }
         self.harness_error(format!("{what}: {e}"))
     }
 
@@ -849,7 +861,7 @@ impl Driver {
             ran.map_err(|e| self.harness_error(format!("the test command could not run: {e}")))?;
         self.git
             .reset_clean()
-            .map_err(|e| self.harness_error(format!("cannot reset after the tests: {e}")))?;
+            .map_err(|e| self.git_fail("cannot reset after the tests", e))?;
         match run.exit.ended_by {
             EndedBy::Normal => Ok(run),
             EndedBy::Deadline | EndedBy::TokenLimit => Err(self.end(
@@ -865,23 +877,26 @@ impl Driver {
         }
     }
 
-    /// Saves the staged change as `<state_dir>/<name>` and resets the tree. A reset failure
-    /// wins over a patch-write failure, since the tree must not keep the change.
-    fn save_staged_and_reset(&self, name: &str) -> Step<PathBuf> {
+    /// Saves the staged change as `<state_dir>/<name>` and resets the tree. Returns where the
+    /// patch went, for the caller's detail. Only a reset failure is an error, since the tree
+    /// must not keep the change; a patch that cannot be saved is reported in the returned text
+    /// and the caller's category stands.
+    fn save_staged_and_reset(&self, name: &str) -> Step<String> {
         let patch_path = self.state_dir.join(name);
-        let saved = self
-            .git
-            .staged_patch()
-            .map_err(|e| self.git_fail("cannot save the staged patch", e))
-            .and_then(|p| {
-                fs::write(&patch_path, p)
-                    .map_err(|e| self.harness_error(format!("cannot write the patch file: {e}")))
-            });
+        let saved = match self.git.staged_patch() {
+            Ok(p) => match fs::write(&patch_path, p) {
+                Ok(()) => format!("patch saved to {}", patch_path.display()),
+                Err(e) => format!(
+                    "the patch could not be written to {}: {e}",
+                    patch_path.display()
+                ),
+            },
+            Err(e) => format!("the patch could not be saved: {e}"),
+        };
         self.git
             .reset_clean()
             .map_err(|e| self.git_fail("cannot reset the workspace", e))?;
-        saved?;
-        Ok(patch_path)
+        Ok(saved)
     }
 
     /// Pushes `sha` to `refname` within the remaining wall clock. A push ended by the deadline
@@ -1008,15 +1023,14 @@ impl Driver {
                 .map_err(|e| self.git_fail("cannot list the staged paths", e))?;
             let denied = self.rules.denied_hits(&paths);
             if !denied.is_empty() {
-                let patch_path =
+                let saved =
                     self.save_staged_and_reset(&format!("scope-violation-red-{n}.patch"))?;
                 return Err(self.end(
                     Outcome::Failed,
                     Category::ScopeViolation,
                     format!(
-                        "red attempt {n} changed denied paths: {}; patch saved to {}",
+                        "red attempt {n} changed denied paths: {}; {saved}",
                         denied.join(", "),
-                        patch_path.display()
                     ),
                 ));
             }
@@ -1088,7 +1102,15 @@ impl Driver {
                     prev = Some(why.to_string());
                     continue;
                 }
-                _ => self.red_observed = Some(true),
+                // A signal-killed run says nothing about the new tests.
+                None => {
+                    return Err(self.harness_error(format!(
+                        "the test command was killed by a signal at the red commit (no exit \
+                         code); see {}",
+                        run.log.display()
+                    )))
+                }
+                Some(_) => self.red_observed = Some(true),
             }
 
             if let Some(map) = claims.and_then(|c| c.criteria_map) {
@@ -1194,29 +1216,27 @@ impl Driver {
                 .map_err(|e| self.git_fail("cannot list the staged paths", e))?;
             let denied = self.rules.denied_hits(&paths);
             if !denied.is_empty() {
-                let patch_path =
+                let saved =
                     self.save_staged_and_reset(&format!("scope-violation-green-{n}.patch"))?;
                 return Err(self.end(
                     Outcome::Failed,
                     Category::ScopeViolation,
                     format!(
-                        "green call {n} changed denied paths: {}; patch saved to {}",
+                        "green call {n} changed denied paths: {}; {saved}",
                         denied.join(", "),
-                        patch_path.display()
                     ),
                 ));
             }
             let frozen = self.rules.green_violations(&paths, &self.red_files);
             if !frozen.is_empty() {
-                let patch_path =
+                let saved =
                     self.save_staged_and_reset(&format!("tests-modified-green-{n}.patch"))?;
                 return Err(self.end(
                     Outcome::Failed,
                     Category::TestsModified,
                     format!(
-                        "green call {n} changed frozen tests or paths: {}; patch saved to {}",
+                        "green call {n} changed frozen tests or paths: {}; {saved}",
                         frozen.join(", "),
-                        patch_path.display()
                     ),
                 ));
             }

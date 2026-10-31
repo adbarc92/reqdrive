@@ -5,6 +5,8 @@ use std::path::PathBuf;
 pub const SCHEMA: &str = "story-work-order/0";
 
 const EVIDENCE_CAP: usize = 8192;
+/// The longest wall clock a work order may ask for: 7 days.
+pub const MAX_WALL_CLOCK_SECS: u64 = 604_800;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkOrder {
@@ -150,8 +152,10 @@ pub fn validate_shape(wo: &WorkOrder) -> Result<(), String> {
     if wo.limits.turns == 0 {
         return Err("limits.turns must be greater than 0".into());
     }
-    if wo.limits.wall_clock_secs == 0 {
-        return Err("limits.wall_clock_secs must be greater than 0".into());
+    if wo.limits.wall_clock_secs == 0 || wo.limits.wall_clock_secs > MAX_WALL_CLOCK_SECS {
+        return Err(format!(
+            "limits.wall_clock_secs must be between 1 and {MAX_WALL_CLOCK_SECS} (7 days)"
+        ));
     }
     if wo.limits.tokens == 0 {
         return Err("limits.tokens must be greater than 0".into());
@@ -162,6 +166,20 @@ pub fn validate_shape(wo: &WorkOrder) -> Result<(), String> {
     if wo.tests_ref.is_empty() || !wo.tests_ref.starts_with("refs/") {
         return Err("tests_ref must be non-empty and start with refs/".into());
     }
+    if wo.attempt_branch.starts_with("refs/") {
+        return Err("attempt_branch must be a branch name, without refs/".into());
+    }
+    // A ref cannot be both a file and a directory: these could never both be pushed.
+    let branch_ref = format!("refs/heads/{}", wo.attempt_branch);
+    if wo.tests_ref == branch_ref
+        || wo.tests_ref.starts_with(&format!("{branch_ref}/"))
+        || branch_ref.starts_with(&format!("{}/", wo.tests_ref))
+    {
+        return Err(format!(
+            "tests_ref {:?} collides with attempt_branch {:?} ({branch_ref})",
+            wo.tests_ref, wo.attempt_branch
+        ));
+    }
     if wo.repo.remote.is_empty() {
         return Err("repo.remote must not be empty".into());
     }
@@ -169,6 +187,27 @@ pub fn validate_shape(wo: &WorkOrder) -> Result<(), String> {
         if !(1..=20).contains(&n) {
             return Err("green_max_calls must be between 1 and 20".into());
         }
+    }
+    Ok(())
+}
+
+/// Without isolation the test command and `agent_allow` become one comma-joined
+/// `--allowedTools` value, so a comma in any of them would split a rule. `test_command` is the
+/// resolved one (the work order's or `reqdrive.json`'s).
+pub fn check_allow_rules(wo: &WorkOrder, test_command: &str) -> Result<(), String> {
+    if wo.isolation != Isolation::None {
+        return Ok(());
+    }
+    if test_command.contains(',') {
+        return Err(format!(
+            "test_command {test_command:?} contains ',', which would split its --allowedTools \
+             rule; wrap it in a script"
+        ));
+    }
+    if let Some(rule) = wo.agent_allow.iter().find(|r| r.contains(',')) {
+        return Err(format!(
+            "agent_allow rule {rule:?} contains ',', which would split it in --allowedTools"
+        ));
     }
     Ok(())
 }
@@ -373,6 +412,17 @@ mod tests {
             "limits.wall_clock_secs",
         );
         rejects(|v| v["limits"]["tokens"] = 0.into(), "limits.tokens");
+        rejects(
+            |v| v["limits"]["wall_clock_secs"] = (MAX_WALL_CLOCK_SECS + 1).into(),
+            "limits.wall_clock_secs",
+        );
+        rejects(
+            |v| v["limits"]["wall_clock_secs"] = u64::MAX.into(),
+            "limits.wall_clock_secs",
+        );
+        let mut v = base();
+        v["limits"]["wall_clock_secs"] = MAX_WALL_CLOCK_SECS.into();
+        validate_shape(&parsed(v)).expect("7 days is allowed");
     }
 
     #[test]
@@ -384,6 +434,35 @@ mod tests {
     fn shape_rejects_bad_tests_ref() {
         rejects(|v| v["tests_ref"] = "".into(), "tests_ref");
         rejects(|v| v["tests_ref"] = "heads/x".into(), "tests_ref");
+    }
+
+    #[test]
+    fn shape_rejects_tests_ref_colliding_with_attempt_branch() {
+        rejects(
+            |v| v["tests_ref"] = "refs/heads/reqdrive/US-001".into(),
+            "tests_ref",
+        );
+        rejects(
+            |v| v["tests_ref"] = "refs/heads/reqdrive/US-001/tests".into(),
+            "tests_ref",
+        );
+        rejects(
+            |v| v["tests_ref"] = "refs/heads/reqdrive".into(),
+            "tests_ref",
+        );
+        rejects(
+            |v| v["attempt_branch"] = "refs/heads/x".into(),
+            "attempt_branch",
+        );
+        for ok in [
+            "refs/heads/reqdrive/US-001.tests",
+            "refs/heads/reqdrive/US-0010",
+            "refs/reqdrive/tests/US-001",
+        ] {
+            let mut v = base();
+            v["tests_ref"] = ok.into();
+            validate_shape(&parsed(v)).expect(ok);
+        }
     }
 
     #[test]
@@ -400,6 +479,22 @@ mod tests {
             v["green_max_calls"] = ok.into();
             validate_shape(&parsed(v)).expect("in range");
         }
+    }
+
+    #[test]
+    fn allow_rules_reject_commas_without_isolation() {
+        let wo = parsed(base());
+        check_allow_rules(&wo, "npm test").expect("no comma");
+        let err = check_allow_rules(&wo, "pytest -k 'a,b'").unwrap_err();
+        assert!(err.contains("test_command"), "{err}");
+        let mut v = base();
+        v["agent_allow"] = serde_json::json!(["Bash(git status)", "Bash(ls a,b)"]);
+        let err = check_allow_rules(&parsed(v), "npm test").unwrap_err();
+        assert!(err.contains("agent_allow"), "{err}");
+        let mut v = base();
+        v["isolation"] = "container".into();
+        v["agent_allow"] = serde_json::json!(["Bash(ls a,b)"]);
+        check_allow_rules(&parsed(v), "pytest -k 'a,b'").expect("no --allowedTools in a container");
     }
 
     #[test]

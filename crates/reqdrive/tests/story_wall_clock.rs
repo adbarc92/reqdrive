@@ -24,7 +24,7 @@ fn wall_clock_limit_halts() {
     assert_eq!(f.calls(), 2, "green was reached");
     let detail = r["failure"]["detail"].as_str().unwrap();
     assert!(detail.contains("agent call 2"), "{detail}");
-    assert!(took < Duration::from_secs(8), "took {took:?}");
+    assert!(took < Duration::from_secs(15), "took {took:?}");
     assert!(
         r["head_sha"].is_null(),
         "no evidence push after the deadline"

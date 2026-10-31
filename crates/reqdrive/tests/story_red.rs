@@ -139,6 +139,52 @@ fn red_touching_workflow_is_scope_violation_and_never_pushed() {
 }
 
 #[test]
+fn unwritable_patch_keeps_scope_violation_with_one_error() {
+    let f = Fixture::new();
+    // A directory where the patch file would go (`state` is the workspace's sibling).
+    let bad = json!({"writes": {
+        "test/feature.test": "AC-1 AC-2\nexpect src/feature.txt done\n",
+        ".github/workflows/x.yml": "on: push\n",
+        "../state/scope-violation-red-1.patch/blocker": ""
+    }});
+    let (events, _) = f.run(&f.order(), &script(vec![bad]));
+    assert_eq!(category(&events), "scope_violation");
+    let detail = result(&events)["failure"]["detail"].as_str().unwrap();
+    assert!(detail.contains("could not be written"), "{detail}");
+    let errors = events.iter().filter(|e| e["type"] == "error").count();
+    assert_eq!(errors, 1, "{events:?}");
+    assert!(!f.ws.join(".github").exists(), "the workspace was reset");
+}
+
+#[test]
+fn comma_in_test_command_is_work_order_invalid() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    order["test_command"] = json!(format!("\"{FAKE}\" check-tests test,other"));
+    let (events, code) = f.run(&order, &script(vec![red_ok()]));
+    assert_eq!(code, 0);
+    assert_eq!(category(&events), "work_order_invalid");
+    let detail = result(&events)["failure"]["detail"].as_str().unwrap();
+    assert!(detail.contains("test_command"), "{detail}");
+    assert_eq!(f.calls(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn red_test_run_killed_by_a_signal_is_harness_error() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    // Passes at the base; at the red commit the checker fails and the shell kills itself.
+    order["test_command"] = json!(format!("\"{FAKE}\" check-tests test || kill -9 $$"));
+    let (events, code) = f.run(&order, &script(vec![red_ok()]));
+    assert_eq!(code, 0);
+    assert_eq!(category(&events), "harness_error");
+    let r = result(&events);
+    assert!(r["red_observed"].is_null(), "{r}");
+    assert!(f.remote_ref(TESTS_REF).is_none());
+}
+
+#[test]
 fn agent_exit_1_is_agent_error() {
     let f = Fixture::new();
     let (events, _) = f.run(&f.order(), &script(vec![json!({"exit": 1})]));
