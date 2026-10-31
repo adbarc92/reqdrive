@@ -2,6 +2,7 @@
 
 pub mod criteria;
 pub mod events;
+pub mod git;
 pub mod limits;
 pub mod outcome;
 pub mod paths;
