@@ -22,7 +22,8 @@ cargo build --release
 ```
 
 This produces `reqdrive`. The package also builds `fake-claude`, a **test-only** stand-in for the
-`claude` CLI that the integration tests use. It has no use outside the tests.
+`claude` CLI that the integration tests use. `cargo install` installs it beside `reqdrive`, but it
+has no use outside the tests.
 
 ## Run
 
@@ -34,10 +35,15 @@ reqdrive --version
 - **stdout:** events, one JSON object per line. The last line is the result.
 - **stderr:** human-readable diagnostics.
 - **Exit code:** `0` once a result line has been written, whatever the outcome. `1` if the result
-  could not be written. `2` for a usage error. To learn what happened, read the result line, not
-  the exit code.
+  could not be written to stdout. `2` for a usage error. To learn what happened, read the result
+  line, not the exit code.
+- **If stdout closes** (the orchestrator stops reading), the run stops at its next check with a
+  `halted`/`interrupted` result. It is still written to `<state_dir>/result.json` and
+  `events.jsonl`, and the process exits 1.
 
-The agent is the `claude` CLI in print mode. It must be installed and logged in.
+The agent is the `claude` CLI in print mode. It must be installed and logged in. The harness has
+so far been tested only against `fake-claude`: the check against the real CLI's stream output
+has not run yet (see [`ROADMAP.md`](ROADMAP.md), Next).
 
 ### Work order
 
@@ -80,9 +86,17 @@ Notes:
   A retry is a new attempt with a new id, branch, tests ref and state directory.
 - `workspace` must be a git work tree at `base_commit` with a clean tree, untracked files included.
 - `test_command` is required. If it is missing, the harness reads `testCommand` from
-  `<workspace>/reqdrive.json`.
+  `<workspace>/reqdrive.json`. With `isolation: none`, neither it nor an `agent_allow` rule may
+  contain a comma, because they are joined with commas into one `--allowedTools` value; wrap such
+  a command in a script.
+- The test command must not run git. If HEAD has moved after a test run, the harness saves the
+  change as `test-moved-head-<label>.patch`, resets, and ends `scope_violation`.
+- `attempt_branch` is a branch name without `refs/`. `tests_ref` starts with `refs/` and may not
+  equal, contain or sit under `refs/heads/<attempt_branch>`.
+- `limits.wall_clock_secs` is 1 to 604 800 (7 days). Only agent calls spend `limits.turns`.
 - `green_max_calls` (1 to 20, default 5) and `denied_paths` are optional. `denied_paths` adds to
-  the built-in list: `.github`, `.husky`, `.claude`, `.mcp.json` and `.gitmodules`.
+  the built-in list: `.github`, `.forgejo`, `.gitea`, `.gitlab-ci.yml`, `.husky`, `.claude`,
+  `.mcp.json` and `.gitmodules`.
 - `isolation` is `container` or `none` (the default). It sets the agent's permission mode; see
   Isolation below.
 - `repo.url` and `base_branch` are accepted and unused in v1. Unknown fields are ignored.
@@ -103,9 +117,14 @@ Every line is a JSON object with the envelope
 | `result` | `outcome`, `head_sha`, `tests_ref_sha`, `red_observed`, `tests_defective`, `failure`, `evidence` | Once, last |
 
 Unknown is `null`, never 0. `thinking` is always `null`, because the CLI does not report it. The
-result is also written to `<state_dir>/result.json`, and every event to
+result is also written to `<state_dir>/result.json`, and every event, from `seq` 1, to
 `<state_dir>/events.jsonl`. Every result field is a claim. The orchestrator should re-read git and
 run the tests itself.
+
+**What `limits.tokens` counts.** Each usage row adds its uncached input, cache writes and output
+(`prompt - cached_prompt + output`); cache reads are excluded and an unknown count adds 0. Rows
+are counted as they stream in, except residue rows (usage the result reports that no streamed row
+covered), which are counted when the call ends, so one call can overshoot the limit.
 
 ## Outcomes
 
@@ -122,8 +141,13 @@ contract. The Rust implementation notes are in section 10 of the same document.
 | `REQDRIVE_HEARTBEAT_MS` | `30000` | Heartbeat interval |
 | `REQDRIVE_GRACE_MS` | `30000` | How long a child gets after an interrupt before it is killed |
 
-On Windows, `REQDRIVE_CLAUDE_BIN` must name a real `.exe`. Only the direct child can be killed
-there, and a `.cmd` shim leaves `node` running and holding the pipe.
+Both intervals are capped at one hour. On Windows, `REQDRIVE_CLAUDE_BIN` must name a real `.exe`.
+Only the direct child can be killed there, and a `.cmd` shim leaves `node` running and holding the
+pipe.
+
+Set `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` for SSH remotes. `GIT_TERMINAL_PROMPT=0` stops git's
+own prompts, but not ssh's, so without it a push can wait on a passphrase or host-key prompt until
+the deadline.
 
 ## Isolation
 
@@ -140,18 +164,37 @@ or a test does. Isolating each attempt is the orchestrator's job:
   attempt, and the agent runs with `--permission-mode bypassPermissions`. `none` (the default) runs
   the agent with `acceptEdits`, plus an allow-list of the test command and `agent_allow`.
 - Every git call the harness makes disables repository hooks (`core.hooksPath` points at an empty
-  directory), fsmonitor and external diff programs. That keeps the harness's own commits and
-  pushes predictable. It does not make a hostile repository safe.
+  directory), fsmonitor, external diff programs and automatic gc. That keeps the harness's own
+  commits and pushes predictable. It does not make a hostile repository safe.
+- **The agent and the test command inherit the harness's environment**: the SSH agent, credential
+  helpers and any tokens in it. (Only the variables that point git at another repository, such
+  as `GIT_DIR`, are removed.) So agent-written tests can push, or reach anything those
+  credentials reach, on their own. "Nothing denied is pushed" covers only the pushes the harness
+  makes. Give each attempt its own credentials, scoped to its branch and tests ref.
+- **Without `--bare`, the agent loads configuration it does not choose.** The user's and the
+  project's `.claude/` hooks, plugins and MCP servers (`.mcp.json`) load into every agent call.
+  The denied paths stop the agent adding them, but not ones already in the repository or the
+  user's home.
+- **Check is not hermetic.** The tree is reset with `reset --hard` and `clean -fd`, which keep
+  ignored files, so a build output or dependency directory left by an earlier run can make Check
+  pass. The orchestrator must run its own tests on a fresh checkout before it merges.
+- On Windows, attempts that are worktrees of one repository share an object store, and two that
+  write byte-identical objects at the same moment can fail with "Permission denied" while
+  committing or pushing. Separate clones avoid it.
 
 ## Processes and signals
 
 - On Unix, every child runs in its own process group. Interrupt and kill go to the whole group, so
-  processes started by a test command stop too. The grace period applies to the group's leader; once
-  the leader has exited after an interrupt, the rest of the group is killed at once.
+  processes started by a test command stop too. The grace period applies to the group's leader;
+  once the leader has exited, after an interrupt or not, the rest of the group is killed at once.
 - On Windows only the direct child is killed, and it is killed at the interrupt without a grace
   period.
+- After the agent exits, the harness reads the rest of its stdout for the grace period (at least
+  1 s). If a leftover process still holds the pipe open after that, the harness stops reading,
+  keeps what it has, and emits a `usage_incomplete` error.
 - SIGINT, SIGTERM and SIGHUP (Ctrl-C and Ctrl-Break on Windows) make the harness stop the current
-  child, write a `halted` result with category `interrupted`, and exit 0.
+  child, write a `halted` result with category `interrupted`, and exit 0. Closing the console
+  window on Windows ends the process without a result.
 - Concurrent attempts are safe when each has its own workspace (isolated as above) and `state_dir`.
 
 ## Development

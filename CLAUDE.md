@@ -42,7 +42,7 @@ crates/reqdrive/src/
   git.rs             git through `git -C <workspace>` with a fixed identity
   agent.rs           the claude-code adapter: arguments, one call, its outcome
   story.rs           the driver: stages, the result on every path, the heartbeat
-  bin/fake-claude.rs test-only stand-in for `claude`, plus the `check-tests` and `spew` helpers
+  bin/fake-claude.rs test-only stand-in for `claude`, plus the `check-tests`, `spew` and `hold` helpers
 crates/reqdrive/tests/   integration tests that run the real binaries; common/ holds helpers
 ```
 
@@ -50,7 +50,8 @@ crates/reqdrive/tests/   integration tests that run the real binaries; common/ h
 
 - **The driver orchestrates; the agent implements.** The harness owns every counter and makes every
   commit. The agent edits files and runs the test command. It never runs git and never writes
-  state.
+  state. The driver owns the expected HEAD; HEAD is checked after every agent call and test run
+  and before every push, and a mismatch is `scope_violation`.
 - **Unknown is `null`, never 0.** Every count is an `Option<u64>`.
 - **Children never inherit stdout.** Every `Command` sets `stdin` (null, or a file for the prompt)
   and an explicit `stdout`. A child must not be able to forge an event.
@@ -68,32 +69,35 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-All three must pass before a commit. Set `CARGO_TARGET_DIR` to a fast disk if the checkout is on a
-slow one. Never create a `target/` directory inside a worktree, and run one cargo build at a time.
+All three must pass before a commit. `CARGO_TARGET_DIR` may point outside the checkout (for example
+to a fast disk). Run one cargo build at a time.
 Integration tests find the bins through `CARGO_BIN_EXE_*`, which is not set for unit tests in
 `src/`, so any test that runs a bin belongs under `crates/reqdrive/tests/`.
 
 ## Conventions
 
 - Toolchain 1.93.1 (`rust-toolchain.toml`), edition 2021. `#![deny(unsafe_code)]` in `lib.rs`;
-  only `proc.rs`'s Unix `kill` calls carry `#[allow(unsafe_code)]`. Do not use `forbid`.
+  in `src/`, only `proc.rs`'s Unix `kill` calls carry `#[allow(unsafe_code)]`. Do not use `forbid`.
 - The work-order `schema` is exactly `"story-work-order/0"`. The event envelope is
   `{"v":1,"attempt_id","seq","ts"}`, applied after the body so a body cannot override it.
 - Outcomes: `pushed`, `no_change`, `failed`, `halted`. There is no `pr_open` in v1.
 - `test_command` runs through `sh -c` on Unix and `cmd` with `raw_arg("/S /C \"<cmd>\"")` on
   Windows, always with `CI=true`.
 - Git runs as `git -C <workspace> -c core.hooksPath=<state_dir>/no-hooks …` with
-  `GIT_TERMINAL_PROMPT=0`, fsmonitor and external protocols off, and `--no-ext-diff --no-textconv`
-  on diffs. Commits use a fixed identity and `--no-verify`. Pushes are `push --no-verify <remote>
-  <sha>:<ref>`, never `-u`. Every `git diff … --name-only` carries `--no-renames`.
+  `GIT_TERMINAL_PROMPT=0`, fsmonitor, external protocols and auto gc/maintenance off, and
+  `--no-ext-diff --no-textconv` on diffs. Commits use a fixed identity and `--no-verify`. Pushes are
+  `-c push.followTags=false -c push.recurseSubmodules=no push --no-verify <remote> <sha>:<ref>`,
+  never `-u`. Every `git diff … --name-only` carries `--no-renames`. git, the agent and the test
+  command all run without `proc::REPO_ENV` (`GIT_DIR` and the other repository-locating vars).
 - Unix children are spawned with `process_group(0)`; interrupt and kill go to the group. On Windows
   only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`.
 - A spawn error for the agent or the test command is a `HarnessError`, with the text in the detail.
 - Defaults: heartbeat 30 000 ms (`REQDRIVE_HEARTBEAT_MS`), interrupt grace 30 000 ms
-  (`REQDRIVE_GRACE_MS`), agent binary `claude` (`REQDRIVE_CLAUDE_BIN`), Green at most
+  (`REQDRIVE_GRACE_MS`), both capped at one hour, agent binary `claude` (`REQDRIVE_CLAUDE_BIN`), Green at most
   `green_max_calls` calls (default 5), Red two attempts. Failure evidence is capped at 8 192 bytes
   per entry on a char boundary, a test-log tail is 2 048 bytes, a `log` line 2 000 chars.
-- Denied paths: `.github`, `.husky`, `.claude`, `.mcp.json`, `.gitmodules`, plus the work order's.
+- Denied paths: `.github`, `.forgejo`, `.gitea`, `.gitlab-ci.yml`, `.husky`, `.claude`, `.mcp.json`,
+  `.gitmodules`, plus the work order's.
 - Tests must work with a workspace or state path that contains a space, skip non-JSON or partial
   agent output lines, keep test output in a log file with only a tail in events, and cope with a
   failing pre-commit hook and CRLF in diffs.

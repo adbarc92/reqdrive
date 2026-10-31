@@ -395,9 +395,10 @@ Four rules keep those commits clean and keep them from failing:
   and pushes use `--no-verify`. A fresh container has no identity. A repository's pre-commit or
   pre-push hook would reject the deliberately red tests commit. The orchestrator, not the harness,
   runs the checks that matter. This bypass is question Q14.
-- **Some paths are always denied.** Red and Green may never change `.github/`, `.husky/`,
-  `.claude/`, `.mcp.json` or `.gitmodules`. A violation is `scope_violation`. A pushed workflow file
-  would run in CI, and a `.claude/` or `.mcp.json` file would load into the next agent call (§3.9).
+- **Some paths are always denied.** Red and Green may never change `.github/`, `.forgejo/`,
+  `.gitea/`, `.gitlab-ci.yml`, `.husky/`, `.claude/`, `.mcp.json` or `.gitmodules`. A violation is
+  `scope_violation`. A pushed workflow file would run in CI, and a `.claude/` or `.mcp.json` file
+  would load into the next agent call (§3.9).
   The work order can add paths to this list.
 - **The agent's prompts say not to run git.**
 
@@ -544,9 +545,10 @@ pipeline_pid=$!
   test has the fake agent exit 1.
 - In this sketch every command is started through `run_child` (§3.1); it is left out to keep the
   sketch readable.
-- Before a child starts, a remaining wall-clock or turn budget of zero or less is treated as
-  `limit_reached`. `timeout 0` and `--max-turns 0` must never be passed, because `timeout 0`
-  disables the timeout.
+- Before a child starts, a remaining wall-clock budget of zero or less is treated as
+  `limit_reached`, and so is a turn budget of zero before an agent call. Only agent calls spend
+  turns, so the test runs and pushes after the last call still happen. `timeout 0` and
+  `--max-turns 0` must never be passed, because `timeout 0` disables the timeout.
 - `usage.jq` reads each line with `fromjson? // empty`, so a non-JSON line is skipped instead of
   ending jq (and killing `tee` and the CLI with SIGPIPE).
 - In a `foreach`, it pairs each `message_start` with its `message_delta`. The first gives the model
@@ -904,7 +906,7 @@ crate: std threads and channels are enough, and there is one subcommand.
 | fd 3/fd 4, a jq emitter, `run_child` | One `Emitter` behind an `Arc<Mutex<…>>` owns stdout and `events.jsonl`. It adds `v`, `attempt_id`, `seq` and `ts` last, so a body can never set them. Every child is spawned with an explicit `stdout` (piped or a file) and `stdin` set to null. Without that, std would let the child inherit our stdout. A write error on stdout is the one case that ends with a non-zero exit |
 | `trap '' PIPE` and restoring it | Rust ignores SIGPIPE in its own process, and std resets it to the default in spawned children on Unix |
 | The EXIT trap and `pending_result` | `story::run` returns a `ResultEvent` on every path. Errors are values. Every failing path goes through one `end()` that also emits the fatal `error` event. `run` stops and joins the heartbeat thread before it returns. `main` wraps `run` in `catch_unwind`, then calls `Emitter::finish(result)`, which writes the result once, also writes `<state_dir>/result.json`, and refuses any later event. It then exits 0 |
-| `timeout -s INT -k 30` and wait loops | `proc::supervise` polls `try_wait` every 100 ms. When the deadline passes, the interrupt flag is set, or the token limit is hit, it interrupts the child and kills it if it is still running 30 s later. It returns `Exit { code, ended_by: Normal \| Deadline \| Interrupted \| TokenLimit }`. On Unix every child is spawned in its own process group (`process_group(0)`), and SIGINT and SIGKILL go to the group, so grandchildren under `sh -c` stop too. On Windows only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`, not a `.cmd` shim. Job Objects are deferred. The 30 s grace applies to the group's leader: once the leader exits after an interrupt, the whole group is killed at once, because background grandchildren ignore SIGINT under a non-interactive `sh` |
+| `timeout -s INT -k 30` and wait loops | `proc::supervise` polls `try_wait` every 100 ms. When the deadline passes, the interrupt flag is set, or the token limit is hit, it interrupts the child and kills it if it is still running 30 s later. It returns `Exit { code, ended_by: Normal \| Deadline \| Interrupted \| TokenLimit }`. On Unix every child is spawned in its own process group (`process_group(0)`), and SIGINT and SIGKILL go to the group, so grandchildren under `sh -c` stop too. On Windows only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`, not a `.cmd` shim. Job Objects are deferred. The 30 s grace applies to the group's leader: once the leader exits, after an interrupt or not, the rest of the group is killed at once, because background grandchildren ignore SIGINT under a non-interactive `sh`. The agent's stdout reader gets the grace (at least 1 s) after the agent exits; a pipe still held open past that, by a process that left the group or by any descendant on Windows, is abandoned with a `usage_incomplete` error |
 | Traps for INT, TERM and HUP | `ctrlc` with `termination` replaces the default action for SIGINT, SIGTERM and SIGHUP on Unix, and for Ctrl-C and Ctrl-Break on Windows. It sets an `AtomicBool` that the supervisor and the driver poll before every step. Closing the console on Windows ends the process without a result |
 | Hooks bypassed with `--no-verify` | Every git call also passes `-c core.hooksPath=<state_dir>/no-hooks`, an empty directory. `--no-verify` alone leaves `prepare-commit-msg`, `post-checkout` and `reference-transaction` running |
 | Exit 126/127 means the runner is missing | Unix only. On Windows `cmd` reports a missing command as exit 1, so a missing runner shows up as `base_broken` at provision instead |
@@ -957,6 +959,24 @@ crate: std threads and channels are enough, and there is one subcommand.
 - **`head_sha` on `failed` and `halted` results** is set only when the evidence push succeeded,
   because a local-only sha cannot be verified by the orchestrator. No evidence push follows a
   `push_failed`.
+- **The driver owns the expected HEAD.** Only its own commits and resets move it. HEAD is checked
+  after every agent call and every test run and before every push. A mismatch (an agent or a test
+  command that ran git) saves a patch, resets to the expected commit and ends `scope_violation`.
+  Deliver pushes exactly the commit Check ran on.
+- **A dead stdout stops the run.** Every event is logged to `events.jsonl` first. The first failed
+  stdout write sets the interrupt flag, so the attempt ends `halted`/`interrupted` at its next
+  check, and `result.json` is still written; the process exits 1.
+- **More shape checks:** `limits.wall_clock_secs` is at most 7 days; `attempt_branch` has no
+  `refs/` prefix; `tests_ref` may not equal, contain or sit under `refs/heads/<attempt_branch>`.
+  Without isolation, a comma in the test command or an `agent_allow` rule is `work_order_invalid`,
+  because the rules are joined with commas into one `--allowedTools` value.
+- **Red's test run killed by a signal** (no exit code) is `harness_error`, since it says nothing
+  about the new tests. Green and Check count it as a failing run.
+- **Repository-locating env vars** (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+  `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`) are removed for
+  git, the agent and the test command. git also runs with `gc.auto=0` and
+  `maintenance.auto=false`, and pushes with `push.followTags=false` and
+  `push.recurseSubmodules=no`.
 
 The Bash suite's freeze gate is archived with it. A hash lock over contract tests, as the factory
 plans have it, is not part of v1.

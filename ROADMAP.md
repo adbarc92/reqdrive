@@ -20,7 +20,8 @@ The design is
   that two attempts in parallel give two branches, two tests refs, and a usage ledger that
   reconciles with `modelUsage`.
 - **Linux CI.** The code has been run on Windows. The first Linux run on the pinned toolchain has
-  not happened yet, and the Unix-only process-group code has not been run there.
+  not happened yet, so the Unix-only process-group code and the Unix-only tests (signals, a
+  signal-killed red run) have not been compiled or run.
 
 ## Deferred from v1 (spec section 10.5)
 
@@ -30,7 +31,8 @@ The design is
   then such a policy is refused with `policy_unsatisfiable`.
 - The `harness-protocol` transport (Q2). v1 is the CLI with JSON lines.
 - Docker workspaces. Isolation stays the orchestrator's job (section 3.9).
-- A hash lock over contract tests, as the factory plans have it.
+- A hash lock over contract tests, as the factory plans have it (spec section 10.4).
+- The factory plans' crates and gates (spec section 10.5; see also "Not the current path" below).
 
 ## Planned improvements
 
@@ -42,6 +44,12 @@ The design is
   bounded retry on that stderr pattern. Distinct content, or separate clones, avoids it.
 - **Windows missing runner.** On Windows `cmd` reports a missing command as exit 1, so a missing
   test runner shows up as `base_broken` at provision rather than `harness_error`.
+- **Hermetic Check.** Check runs after `reset --hard` and `clean -fd`, which keep ignored files, so
+  ignored build output or dependencies can make it pass. Freezing or removing ignored files before
+  Check would make it hermetic. Until then the orchestrator runs its own tests.
+- **A second Ctrl-C to force exit.** Today every interrupt waits for the current child's grace.
+- **An abandoned stdout reader** (the agent exited but a leftover process holds its pipe) stays
+  blocked on its thread until that process closes the pipe or the harness exits.
 
 ## Open questions
 
@@ -91,23 +99,20 @@ Found in review and deliberately left for later. None blocks v1.
   failed write cannot be retried. The envelope-override test cannot exercise a real override.
 - `added_lines` can drop a `++` line that follows a removed `-- ` line. Path normalisation does not
   collapse `//` or `..`, and does no non-ASCII folding, alternate-data-stream or 8.3 handling.
-- The stream parser adds with plain `u64 +` on untrusted JSON (use `saturating_add`), reports
-  `Some(0)` for a residue when a `modelUsage` total is missing (arguably `null`), and has no direct
-  tests for a delta without an open call or for a non-object line.
+- The stream parser adds with plain `u64 +` on untrusted JSON (use `saturating_add`), and has no
+  direct tests for a delta without an open call or for a non-object line.
 - A backtick in a story title can open inline code in a prompt (cosmetic). The `curl | sh` pattern
   gives a false positive on `sha256sum`.
 - `fake-claude` writes JSON keys in alphabetical order. The grandchild test needs a reaping init.
   A test-log tail can exceed 2 048 bytes when invalid bytes expand to U+FFFD. A `try_wait` error
   leaves the child running.
-- A push cannot be interrupted by Ctrl-C until its deadline. Patches and paths are decoded lossily
-  as UTF-8. `is_work_tree` cannot tell "no git" from "not a repository". Two push tests assert
+- Patches and paths are decoded lossily as UTF-8. `is_work_tree` cannot tell "no git" from "not a repository". Two push tests assert
   less than their names say.
-- No tests for an agent spawn error, a flushed open call, or a token or deadline kill through the
-  adapter.
-- A push failure is classified by its stderr prefix. The heartbeat interval in milliseconds can
-  overflow. Untested paths: the `reqdrive.json` fallback, the red-violations retry, the
+- No tests for an agent spawn error, a flushed open call, a token or deadline kill through the
+  adapter, a panicking stdout reader, or the panic path's `progress{done}`.
+- A push failure is classified by its stderr prefix. Untested paths: the `reqdrive.json` fallback, the red-violations retry, the
   empty-change retry, exit 126 and 127 at Red, the criteria-map artifact, the dangerous-pattern
   logs and the heartbeat.
-- A panic in `main` emits no `progress{done}` event. The wall-clock test depends on timing.
+- The wall-clock test depends on timing (it allows 15 s for a 5 s budget).
 - `git::tests::push_to_bare_remote_without_upstream` failed once on Windows and was not reproduced
   in eight further runs under load.
