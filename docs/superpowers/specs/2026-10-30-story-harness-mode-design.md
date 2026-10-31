@@ -1,8 +1,23 @@
 # Design — Story-harness mode
 
 **Date:** 2026-10-30
-**Status:** Draft for the owner's review. Nothing here is implemented. It passed three rounds of
-adversarial critique, logged at the end.
+**Status:** The owner has ruled on Q1–Q3 (below). It passed three rounds of adversarial critique
+on the seam design, and a fourth on the Rust implementation; all are logged at the end.
+
+**Owner rulings, 2026-10-30:**
+
+- **Q1:** Build it in Rust. It is a standalone story harness in a new cargo workspace, and the Bash
+  tree is archived. It does not execute the factory M0/M1 plans and does not depend on
+  `command-center`.
+- **Q2:** The CLI with JSON lines, for now. The transport will be revisited later.
+- **Q3:** The orchestrator opens PRs. v1 has one deliver route, a push. The `pr` field and the
+  `github` and `forgejo-agit` routes (§2.1, §3.7.1) are not built.
+
+§10 describes the Rust implementation. The following parts of §3 are written for Bash and are
+replaced by §10: the emitter and `run_child` in §3.1, the shell pipeline in §3.6, the signal
+mechanics in §3.7, the file list in §3.11, and the phases in §5. Everything else in §3 stands:
+the work order, stages, Red and the freeze, the events, the outcome table, usage semantics, limits
+semantics, policy, parallel-safety guarantees and permissions.
 **Scope:** How reqdrive could run as a coding harness that an external orchestrator drives: one
 story in, one pull request out. It covers a gap analysis against the orchestrator's provisional
 seam, the parts of that seam that do not fit reqdrive, a design for a `story` mode, an assessment
@@ -846,6 +861,111 @@ Each question has a recommendation. They are ordered by how much of the design t
 - [S-PROTO] `command-center` `main`, `crates/harness-protocol/` (README, `src/types.rs`,
   `src/rpc.rs`; `PROTOCOL_VERSION = "0.1"`), read 2026-10-30
 
+## 10. The Rust implementation
+
+### 10.1 Layout
+
+The repository becomes a cargo workspace. Rust is pinned to 1.93.1 in `rust-toolchain.toml`. The
+Bash tree moves unchanged to `archive/bash-v0.3/`. `docs/superpowers/` stays where it is.
+
+```
+Cargo.toml                    workspace with one member, crates/reqdrive
+crates/reqdrive/              the `reqdrive` binary, plus a library half the tests use
+  src/bin/fake-claude.rs      a test-only stand-in for the `claude` CLI, and a test checker.
+                              It is a bin of this package so integration tests can find it
+                              through CARGO_BIN_EXE_fake-claude
+  src/main.rs                 parses `reqdrive story <work-order.json>`, runs it, exits
+  src/workorder.rs            the work-order types; shape validation (pure)
+  src/outcome.rs              Outcome, Category, retryable, the pending result
+  src/events.rs               event bodies; the Emitter (envelope, seq, ts, stdout + events.jsonl)
+  src/paths.rs                prefix rules: denied, frozen, test paths
+  src/criteria.rs             the whole-word criterion-id check over added diff lines
+  src/prompts.rs              Red and Green prompts; reading the agent's final text
+  src/stream.rs               the stream-json parser: usage rows, final result, residue (pure)
+  src/policy.rs               the inference-policy check and the agent's environment
+  src/limits.rs               the deadline, turn budget and token counter
+  src/proc.rs                 supervised child processes: deadline, interrupt, kill, signal flag
+  src/git.rs                  git through `git -C <workspace>`, with a fixed identity
+  src/agent.rs                the claude-code adapter: arguments, one call, its outcome
+  src/story.rs                the driver: the stages, the pending result, the heartbeat
+```
+
+The external dependencies are `serde`, `serde_json`, `humantime` (for RFC 3339 times), `ctrlc`
+with its `termination` feature (signals on Unix and Windows) and `libc` (Unix only, to send
+SIGINT). `tempfile` is used for tests only. There is no async runtime and no argument-parsing
+crate: std threads and channels are enough, and there is one subcommand.
+
+### 10.2 What Rust changes in the mechanics
+
+| Bash design (§3) | Rust |
+|---|---|
+| fd 3/fd 4, a jq emitter, `run_child` | One `Emitter` behind an `Arc<Mutex<…>>` owns stdout and `events.jsonl`. It adds `v`, `attempt_id`, `seq` and `ts` last, so a body can never set them. Every child is spawned with an explicit `stdout` (piped or a file) and `stdin` set to null. Without that, std would let the child inherit our stdout. A write error on stdout is the one case that ends with a non-zero exit |
+| `trap '' PIPE` and restoring it | Rust ignores SIGPIPE in its own process, and std resets it to the default in spawned children on Unix |
+| The EXIT trap and `pending_result` | `story::run` returns a `ResultEvent` on every path. Errors are values. Every failing path goes through one `end()` that also emits the fatal `error` event. `run` stops and joins the heartbeat thread before it returns. `main` wraps `run` in `catch_unwind`, then calls `Emitter::finish(result)`, which writes the result once, also writes `<state_dir>/result.json`, and refuses any later event. It then exits 0 |
+| `timeout -s INT -k 30` and wait loops | `proc::supervise` polls `try_wait` every 100 ms. When the deadline passes, the interrupt flag is set, or the token limit is hit, it interrupts the child and kills it if it is still running 30 s later. It returns `Exit { code, ended_by: Normal \| Deadline \| Interrupted \| TokenLimit }`. On Unix every child is spawned in its own process group (`process_group(0)`), and SIGINT and SIGKILL go to the group, so grandchildren under `sh -c` stop too. On Windows only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`, not a `.cmd` shim. Job Objects are deferred |
+| Traps for INT, TERM and HUP | `ctrlc` with `termination` replaces the default action for SIGINT, SIGTERM and SIGHUP on Unix, and for Ctrl-C and Ctrl-Break on Windows. It sets an `AtomicBool` that the supervisor and the driver poll before every step. Closing the console on Windows ends the process without a result |
+| Hooks bypassed with `--no-verify` | Every git call also passes `-c core.hooksPath=<state_dir>/no-hooks`, an empty directory. `--no-verify` alone leaves `prepare-commit-msg`, `post-checkout` and `reference-transaction` running |
+| Exit 126/127 means the runner is missing | Unix only. On Windows `cmd` reports a missing command as exit 1, so a missing runner shows up as `base_broken` at provision instead |
+| `limit_hit` file | `ended_by: TokenLimit` carries it |
+| Summing `events.jsonl` for tokens | The stream reader thread adds each usage row's count to an `AtomicU64` in `Limits` |
+| `sh` for `test_command` | `sh -c` on Unix and `cmd /C` on Windows, with `CI=true`, stdout and stderr captured to a log file in `state_dir`, and the same supervision |
+| The criteria map in a fenced block | Unchanged: the `json:criteria-map` block, and `testsDefective` in a `json:iteration-summary` block, are read from the `result` message's text |
+
+**Sanitization** keeps its two purposes from the Bash design, with mechanics suited to Rust.
+
+- **No forged placeholders.** Templates are filled in one pass, by scanning for `@@NAME@@`, so text
+  that was substituted in is never scanned again.
+- **No breaking out of a fence.** Untrusted text sits inside fences of four backticks, and runs of
+  three or more backticks inside it are broken up.
+- **Dangerous patterns are still flagged, warn-only.** The patterns from
+  `archive/bash-v0.3/lib/sanitize.sh` are checked as plain substrings, without the regex crate:
+  `$(`, `` ` ``, `${`, `rm -rf /`, `chmod 777`, `eval `, and `curl`/`wget` with `| sh`. Each match
+  becomes a `log` event.
+
+### 10.3 Tests
+
+- **Unit tests** sit next to each module. The parser is tested against a hand-written fixture in
+  the documented stream format.
+- **Integration tests** in `crates/reqdrive/tests/` run the real binary. Each one builds a temp
+  repository with a bare remote, gives the binary a work order, and points it at `fake-claude`
+  through `REQDRIVE_CLAUDE_BIN`.
+- **`fake-claude`** is driven by a JSON script. For each call it can write files in its working
+  directory, print stream lines, sleep, and exit with a code. Its `check-tests <dir>` subcommand
+  checks `expect <file> <text>` lines in the test files, and it is the test command in the tests,
+  so they run the same on Windows and Linux.
+- **The heartbeat interval** is 30 s, and tests lower it with `REQDRIVE_HEARTBEAT_MS`.
+- **Platform split:** signal tests are `#[cfg(unix)]`, and everything else runs on both platforms.
+- **CI** runs `cargo fmt --check`, `cargo clippy -- -D warnings` and `cargo test` on
+  `ubuntu-latest` and `windows-latest`.
+### 10.4 Decisions the Rust build adds to §3
+
+- **Two more work-order fields:** `green_max_calls` (default 5, from 1 to 20) and `denied_paths`
+  (added to the defaults in §3.3).
+- **`tests_ref` must start with `refs/`.**
+- **Every name-only diff uses `--no-renames`,** so a rename reports both paths to the freeze and
+  denied-path checks.
+- **Remote-tracking refs.** §3.9's "only refs it writes" also covers the remote-tracking refs that a
+  push updates, under `refs/remotes/<remote>/`. They are unique to each attempt too.
+- **No evidence push after an interrupt.** It is still made after a halt caused by a limit. The
+  orchestrator is stopping the attempt, and a network call would delay the exit.
+- **No push without a deadline.** Pushes are supervised with the remaining wall clock, like every
+  other child.
+
+The Bash suite's freeze gate is archived with it. A hash lock over contract tests, as the factory
+plans have it, is not part of v1.
+
+### 10.5 Not in v1
+
+- PR routes (Q3).
+- A second agent adapter (§2.2).
+- `harness-protocol` (Q2).
+- Docker workspaces: isolation stays the orchestrator's (§3.9).
+- The factory plans' crates and gates.
+
+The live check is the last step and needs the owner's go-ahead (Q13). It is one tiny real
+`claude -p` call, to confirm the stream fields the parser assumes, followed by one story run on a
+sandbox repository.
+
 ## Design Critique Log
 
 ### Critique Round 1
@@ -907,3 +1027,24 @@ minor. All were accepted. It confirmed that the §1 gap analysis and its sampled
 | "Reuses its agent invocation" contradicted §3.6 and §3.8 | Minor | Corrected in §0 and §3.3 |
 | Table errors: `forge_failed` is non-fatal too; Red agent failures had no row; `base_missing` was unreachable | Minor | All three fixed (§3.5.1, §3.2) |
 | "The brief" and "the build machine" point at material a public reader cannot see | Minor | Reworded |
+
+### Critique Round 4 (the Rust implementation)
+
+A fresh reviewer checked §10 and the implementation plan together, with experiments in Rust
+1.93.1 and Git Bash. It made 15 findings: 2 blockers, 7 major and 6 minor. All were accepted. It
+confirmed that interface names line up across the plan's tasks, that the fixture arithmetic holds,
+that `cmd` `raw_arg` quoting works with spaces, and that the reader thread prevents a pipe
+deadlock.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `CARGO_BIN_EXE_*` is not set for unit tests inside `src/` (shown by experiment) | Blocker | Tests that run a bin are integration tests under `crates/reqdrive/tests/` |
+| `#![forbid(unsafe_code)]` cannot be overridden by `#[allow]`, which breaks the Unix-only `kill` on Linux CI | Blocker | `#![deny(unsafe_code)]` |
+| `--name-only` diffs hide a rename's old path, so a frozen test or a workflow file could be moved without detection | Major | `--no-renames` everywhere, with a test that a rename lists both paths (§10.4) |
+| The token limit was checked only during a child process, and Red never checked budgets before a call | Major | The driver checks every budget before each agent call, test run and push, and tokens after each agent call |
+| Only the direct child was signalled; npm under `sh -c`, or node under a Windows `.cmd` shim, survived | Major | Unix process groups; a real `.exe` required on Windows; spawn errors become `harness_error`; Job Objects deferred |
+| `--no-verify` does not skip `prepare-commit-msg` and other hooks (shown by experiment) | Major | `-c core.hooksPath=<empty dir>` on every git call |
+| The fatal `error` event, `result.json`, test-log events and stderr lines had no task | Major | A driver `end()` helper, `finish` writing `result.json`, and test-tail `log` and `log_file` events |
+| Parallel-test refs were wrong: a push also creates remote-tracking refs | Major | The test assertion and §3.9 corrected (§10.4) |
+| A global panic hook could fire from a thread and race the real result | Major | `catch_unwind` in `main`, with thread panics surfaced through `join` |
+| Minor: Task 1's clean-tree check; the Windows console-close claim; Windows exit codes; the SIGTERM test's timing; spec/plan naming drift; test-helper file placement; `current_dir` for the agent; `tests_ref` format; process-wide env in a git test; machine paths in public docs | Minor | Each fixed in §10 or the plan |
