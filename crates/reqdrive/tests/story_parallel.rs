@@ -47,7 +47,15 @@ fn prepare(f: &Fixture, n: u32) -> Attempt {
     let order_path = h.join("order.json");
     let script_path = h.join("script.json");
     fs::write(&order_path, order.to_string()).unwrap();
-    fs::write(&script_path, script(vec![red_ok(), green_ok()]).to_string()).unwrap();
+    // Distinct content per attempt: identical files would make identical git objects, and Git
+    // for Windows races finalizing the same loose object in a shared object store ("Permission
+    // denied" / "unable to migrate objects to permanent storage").
+    let red = json!({"writes": {"test/feature.test":
+        format!("AC-1 AC-2
+expect src/feature.txt done-{id}
+")}});
+    let green = json!({"writes": {"src/feature.txt": format!("done-{id}")}});
+    fs::write(&script_path, script(vec![red, green]).to_string()).unwrap();
     Attempt {
         id,
         branch,
@@ -119,8 +127,12 @@ fn two_attempts_in_parallel_worktrees() {
     let refs_before = refs(&f.ws);
     start(&mut a1);
     start(&mut a2);
-    let ev1 = finish(&mut a1);
-    let ev2 = finish(&mut a2);
+    // Drain both stdout pipes at once, so neither process blocks on a full pipe.
+    let (ev1, ev2) = std::thread::scope(|s| {
+        let t1 = s.spawn(|| finish(&mut a1));
+        let t2 = s.spawn(|| finish(&mut a2));
+        (t1.join().unwrap(), t2.join().unwrap())
+    });
     let config_after = fs::read(&config_path).unwrap();
     let refs_after = refs(&f.ws);
 
