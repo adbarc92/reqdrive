@@ -10,5 +10,6 @@ pub mod paths;
 pub mod policy;
 pub mod proc;
 pub mod prompts;
+pub mod story;
 pub mod stream;
 pub mod workorder;
