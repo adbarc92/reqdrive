@@ -2,8 +2,8 @@
 //! `git -C <ws> -c core.hooksPath=<hooks_dir> <args>` with no stdin and no prompts.
 
 use std::fmt;
-use std::fs::File;
-use std::io::Read;
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +37,19 @@ impl std::error::Error for GitError {}
 
 type Res<T> = Result<T, GitError>;
 
+/// An input that git would parse as an option.
+fn dashed(s: &str) -> bool {
+    s.starts_with('-')
+}
+
+fn reject(op: &str, input: &str) -> GitError {
+    GitError {
+        args: op.to_string(),
+        code: None,
+        stderr: format!("refusing argument that starts with '-': {input}"),
+    }
+}
+
 pub struct Git {
     ws: PathBuf,
     hooks_dir: PathBuf,
@@ -64,6 +77,13 @@ impl Git {
             .arg(&self.ws)
             .arg("-c")
             .arg(format!("core.hooksPath={}", self.hooks_dir.display()))
+            // Workspace-controlled config must not run commands during our own calls.
+            .args([
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "protocol.ext.allow=never",
+            ])
             .stdin(Stdio::null())
             .env("GIT_TERMINAL_PROMPT", "0");
         for (k, v) in &self.env {
@@ -99,6 +119,9 @@ impl Git {
     }
 
     pub fn commit_exists(&self, sha: &str) -> bool {
+        if dashed(sha) {
+            return false;
+        }
         self.run(&["cat-file", "-e", &format!("{sha}^{{commit}}")])
             .is_ok()
     }
@@ -115,6 +138,9 @@ impl Git {
     }
 
     pub fn branch_sha(&self, name: &str) -> Res<Option<String>> {
+        if dashed(name) {
+            return Ok(None);
+        }
         match self.run(&[
             "rev-parse",
             "--verify",
@@ -137,19 +163,27 @@ impl Git {
     }
 
     pub fn switch(&self, name: &str) -> Res<()> {
+        if dashed(name) {
+            return Err(reject("switch", name));
+        }
         self.run(&["switch", name]).map(|_| ())
     }
 
     pub fn switch_create(&self, name: &str, at: &str) -> Res<()> {
+        if let Some(bad) = [name, at].into_iter().find(|a| dashed(a)) {
+            return Err(reject("switch -c", bad));
+        }
         self.run(&["switch", "-c", name, at]).map(|_| ())
     }
 
     pub fn ref_format_ok(&self, refname: &str) -> bool {
-        let full = if refname.starts_with("refs/") {
-            refname.to_string()
-        } else {
-            format!("refs/heads/{refname}")
+        let (tail, full) = match refname.strip_prefix("refs/") {
+            Some(t) => (t, refname.to_string()),
+            None => (refname, format!("refs/heads/{refname}")),
         };
+        if dashed(tail) {
+            return false;
+        }
         self.run(&["check-ref-format", &full]).is_ok()
     }
 
@@ -160,6 +194,8 @@ impl Git {
     pub fn staged_paths(&self) -> Res<Vec<String>> {
         let out = self.run(&[
             "diff",
+            "--no-ext-diff",
+            "--no-textconv",
             "--cached",
             "--name-only",
             "--no-renames",
@@ -170,7 +206,14 @@ impl Git {
     }
 
     pub fn staged_patch(&self) -> Res<String> {
-        self.run(&["diff", "--cached", "--binary", "HEAD"])
+        self.run(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--cached",
+            "--binary",
+            "HEAD",
+        ])
     }
 
     /// Commits the index without hooks or signing, and returns the new HEAD.
@@ -196,16 +239,42 @@ impl Git {
     }
 
     pub fn reset_to(&self, sha: &str) -> Res<()> {
+        if dashed(sha) {
+            return Err(reject("reset --hard", sha));
+        }
         self.run(&["reset", "--hard", sha])?;
         self.run(&["clean", "-fd"]).map(|_| ())
     }
 
     pub fn diff_u0(&self, from: &str, to: &str) -> Res<String> {
-        self.run(&["diff", "-U0", "--no-color", from, to])
+        if let Some(bad) = [from, to].into_iter().find(|a| dashed(a)) {
+            return Err(reject("diff -U0", bad));
+        }
+        self.run(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-U0",
+            "--no-color",
+            from,
+            to,
+        ])
     }
 
     pub fn changed_files(&self, from: &str, to: &str) -> Res<Vec<String>> {
-        let out = self.run(&["diff", "--name-only", "--no-renames", "-z", from, to])?;
+        if let Some(bad) = [from, to].into_iter().find(|a| dashed(a)) {
+            return Err(reject("diff --name-only", bad));
+        }
+        let out = self.run(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            from,
+            to,
+        ])?;
         Ok(split_nul(&out))
     }
 
@@ -222,20 +291,31 @@ impl Git {
     ) -> Res<()> {
         static N: AtomicU64 = AtomicU64::new(0);
         let refspec = format!("{sha}:{refname}");
-        let args = ["push", "--no-verify", remote, refspec.as_str()];
+        let args = ["push", "--no-verify", "--", remote, refspec.as_str()];
         let joined = args.join(" ");
         let fail = |code: Option<i32>, stderr: String| GitError {
             args: joined.clone(),
             code,
             stderr,
         };
+        if let Some(bad) = [remote, sha].into_iter().find(|a| dashed(a)) {
+            return Err(reject(&joined, bad));
+        }
         // stderr goes to a file, not a pipe: `supervise` only waits, so a full pipe would hang.
-        let log = std::env::temp_dir().join(format!(
-            "reqdrive-push-{}-{}.log",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        let err = File::create(&log).map_err(|e| fail(None, e.to_string()))?;
+        // The file lives in the driver's state dir (the hooks dir's parent), never the shared
+        // temp dir, and is created exclusively.
+        let state_dir = match self.hooks_dir.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => return Err(fail(None, "hooks dir has no parent state dir".to_string())),
+        };
+        let (log, err) = loop {
+            let log = state_dir.join(format!("push-{}.log", N.fetch_add(1, Ordering::SeqCst)));
+            match OpenOptions::new().write(true).create_new(true).open(&log) {
+                Ok(f) => break (log, f),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(fail(None, e.to_string())),
+            }
+        };
         let mut cmd = self.base();
         cmd.args(args).stdout(Stdio::null()).stderr(err);
         let spawned = spawn_grouped(&mut cmd);
@@ -493,5 +573,109 @@ mod tests {
         assert!(g.ref_format_ok("feat/ok"));
         assert!(g.ref_format_ok("refs/heads/ok"));
         assert!(!g.ref_format_ok("refs/heads/a b"));
+    }
+
+    #[test]
+    fn push_rejects_option_like_remote_and_sha() {
+        let f = Fixture::new();
+        let g = f.git();
+        let sha = g.head().unwrap();
+        let marker = f.tmp.path().join("pwned");
+        let remote = format!("--receive-pack=echo x > {}", marker.display());
+        let far = Instant::now() + Duration::from_secs(30);
+        let grace = Duration::from_secs(5);
+        assert!(g.push(&remote, &sha, "refs/heads/x", far, grace).is_err());
+        assert!(!marker.exists());
+        assert!(g.push("origin", "-x", "refs/heads/x", far, grace).is_err());
+    }
+
+    #[test]
+    fn dash_leading_inputs_are_rejected() {
+        let f = Fixture::new();
+        let g = f.git();
+        let head = g.head().unwrap();
+        assert!(!g.ref_format_ok("-x"));
+        assert!(!g.ref_format_ok("refs/-x"));
+        assert!(g.switch_create("-b", &head).is_err());
+        assert!(g.switch_create("ok", "-x").is_err());
+        assert!(g.switch("-x").is_err());
+        assert!(!g.commit_exists("-x"));
+        assert!(g.reset_to("-x").is_err());
+        assert!(g.diff_u0("-x", &head).is_err());
+        assert!(g.changed_files(&head, "--output=boom").is_err());
+        assert!(!f.ws.join("boom").exists());
+        assert_eq!(g.branch_sha("-x").unwrap(), None);
+    }
+
+    #[test]
+    fn workspace_fsmonitor_config_is_not_run() {
+        let f = Fixture::new();
+        let marker = f.tmp.path().join("fsmonitor-ran");
+        let cmd = format!(
+            "echo x > '{}'",
+            marker.display().to_string().replace("\\", "/")
+        );
+        plain(&f.ws, &["config", "core.fsmonitor", &cmd]);
+        // The config does run a command for a plain git call...
+        plain(&f.ws, &["status", "--porcelain"]);
+        assert!(marker.exists(), "fixture must trigger fsmonitor");
+        fs::remove_file(&marker).unwrap();
+        // ...but not for the harness's calls.
+        let g = f.git();
+        assert!(g.is_clean().unwrap());
+        g.staged_paths().unwrap();
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn push_past_deadline_reports_deadline() {
+        let f = Fixture::new();
+        let g = f.git();
+        let bare = f.tmp.path().join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        plain(&bare, &["init", "-q", "--bare"]);
+        plain(&f.ws, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        let sha = g.head().unwrap();
+        let err = g
+            .push(
+                "origin",
+                &sha,
+                "refs/heads/late",
+                Instant::now(),
+                Duration::from_millis(200),
+            )
+            .unwrap_err();
+        assert!(err.stderr.starts_with("deadline"), "{}", err.stderr);
+    }
+
+    #[test]
+    fn push_log_lives_in_state_dir_and_is_removed() {
+        let f = Fixture::new();
+        let g = f.git();
+        let sha = g.head().unwrap();
+        let _ = g.push(
+            "nowhere",
+            &sha,
+            "refs/heads/x",
+            Instant::now() + Duration::from_secs(30),
+            Duration::from_secs(5),
+        );
+        let left: Vec<_> = fs::read_dir(f.tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("push-"))
+            .collect();
+        assert!(left.is_empty());
+        // A hooks dir with no parent cannot hold the log.
+        let rootless = Git::new(&f.ws, Path::new(""));
+        assert!(rootless
+            .push(
+                "nowhere",
+                &sha,
+                "refs/heads/x",
+                Instant::now() + Duration::from_secs(30),
+                Duration::from_secs(5)
+            )
+            .is_err());
     }
 }
