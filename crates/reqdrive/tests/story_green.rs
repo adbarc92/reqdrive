@@ -5,7 +5,9 @@ mod common;
 use common::*;
 use serde_json::{json, Value};
 use std::fs;
-use std::time::Duration;
+use std::io::{BufRead, BufReader};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 fn defective_text() -> String {
     "The test is wrong.\n\n```json:iteration-summary\n\
@@ -316,4 +318,51 @@ fn orphan_holding_agent_stdout_does_not_hang_the_run() {
                 .contains("agent stdout still open after exit")),
         "{events:?}"
     );
+}
+
+#[test]
+fn closed_stdout_halts_the_run_and_keeps_the_logs() {
+    let f = Fixture::new();
+    // Red sleeps, so the run is waiting on the agent when the reader goes away.
+    let mut slow = red_ok();
+    slow["sleep_ms"] = json!(5_000);
+    let mut cmd = f.command(&f.order().to_string(), &script(vec![slow, green_ok()]));
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let started = Instant::now();
+    let mut child = cmd.spawn().expect("spawn reqdrive");
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut first = String::new();
+    out.read_line(&mut first).unwrap();
+    drop(out);
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        if started.elapsed() > Duration::from_secs(20) {
+            let _ = child.kill();
+            panic!("reqdrive did not exit within 20 s of losing its stdout");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(1), "the result could not be shown");
+    assert!(f.calls() <= 1, "no green call after the reader went away");
+
+    let state = f.state_dir();
+    let r: Value =
+        serde_json::from_str(&fs::read_to_string(state.join("result.json")).unwrap()).unwrap();
+    assert_eq!(r["outcome"], "halted", "{r}");
+    assert_eq!(r["failure"]["category"], "interrupted", "{r}");
+    let log: Vec<Value> = fs::read_to_string(state.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let seqs: Vec<u64> = log.iter().map(|e| e["seq"].as_u64().unwrap()).collect();
+    assert_eq!(
+        seqs,
+        (1..=log.len() as u64).collect::<Vec<_>>(),
+        "complete from seq 1"
+    );
+    assert_eq!(log.last().unwrap()["type"], "result");
+    assert!(f.remote_ref(BRANCH_REF).is_none());
 }
