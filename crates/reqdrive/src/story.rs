@@ -12,11 +12,13 @@ use crate::criteria::{added_lines, missing_ids};
 use crate::events::{ArtifactKind, Emitter, Event, LogStream, Stage, WaitingOn};
 use crate::git::{Git, GitError};
 use crate::limits::Limits;
-use crate::outcome::{Category, Outcome, ResultEvent};
+use crate::outcome::{Category, Evidence, Outcome, ResultEvent};
 use crate::paths::PathRules;
 use crate::policy;
 use crate::proc::{self, EndedBy, TestRun};
-use crate::prompts::{dangerous_patterns, read_claims, red_prompt};
+use crate::prompts::{
+    dangerous_patterns, green_prompt, read_claims, red_prompt, GreenContext, TestsDefective,
+};
 use crate::workorder::{self, WorkOrder};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,6 +29,7 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_HEARTBEAT_MS: u64 = 30_000;
 const RED_ATTEMPTS: u32 = 2;
+const DEFAULT_GREEN_CALLS: u32 = 5;
 const TEST_LOG_LINES: usize = 20;
 
 /// What the driver takes from its process environment.
@@ -416,6 +419,8 @@ fn validate(
         red_files: Vec::new(),
         tests_ref_sha: None,
         red_observed: None,
+        criteria_map: None,
+        evidence: None,
     })
 }
 
@@ -444,24 +449,82 @@ struct Driver {
     red_files: Vec<String>,
     tests_ref_sha: Option<String>,
     red_observed: Option<bool>,
+    /// Where red's criteria map was written, if the agent gave one.
+    criteria_map: Option<String>,
+    /// Set by `check`; carried by every result after it.
+    evidence: Option<Evidence>,
 }
 
 impl Driver {
     fn drive(&mut self) -> ResultEvent {
-        match self.stages() {
+        let mut r = match self.stages() {
             Ok(r) | Err(r) => r,
+        };
+        if matches!(r.outcome, Outcome::Failed | Outcome::Halted) {
+            self.push_evidence(&mut r);
         }
+        r
     }
 
     fn stages(&mut self) -> Step<ResultEvent> {
         self.provision()?;
         self.red()?;
         self.publish_red()?;
-        Err(self.end(
-            Outcome::Failed,
-            Category::HarnessError,
-            "green not implemented",
-        ))
+        self.green()?;
+        self.check()?;
+        self.deliver()
+    }
+
+    /// After a failure or a halt that follows `red_published`, pushes HEAD to the attempt
+    /// branch so the orchestrator can inspect it, and sets `head_sha` if that push succeeds.
+    /// Best effort: it never changes the outcome. Skipped after an interrupt (the orchestrator
+    /// is stopping the attempt), once the deadline has passed, after a failed push (it would
+    /// only repeat it), and when nothing was committed past the base.
+    fn push_evidence(&self, r: &mut ResultEvent) {
+        let category = r.failure.as_ref().map(|f| f.category);
+        if self.tests_ref_sha.is_none()
+            || matches!(category, Some(Category::Interrupted | Category::PushFailed))
+            || proc::interrupted()
+            || self.limits.remaining().is_none()
+        {
+            return;
+        }
+        let head = match self.git.head() {
+            Ok(h) => h,
+            Err(e) => {
+                self.warn(format!("evidence push skipped: cannot read HEAD: {e}"));
+                return;
+            }
+        };
+        if head == self.wo.base_commit {
+            return;
+        }
+        let refname = format!("refs/heads/{}", self.wo.attempt_branch);
+        let pushed = {
+            let _w = Waiting::on(&self.waiting, WaitingOn::Push);
+            self.git.push(
+                &self.wo.repo.remote,
+                &head,
+                &refname,
+                self.limits.deadline(),
+                self.env.grace,
+            )
+        };
+        match pushed {
+            Ok(()) => {
+                self.warn(format!(
+                    "pushed {head} to {} as evidence",
+                    self.wo.attempt_branch
+                ));
+                let _ = self.emitter.emit(Event::Artifact {
+                    kind: ArtifactKind::Branch,
+                    reference: self.wo.attempt_branch.clone(),
+                    sha: Some(head.clone()),
+                });
+                r.head_sha = Some(head);
+            }
+            Err(e) => self.warn(format!("the evidence push failed: {e}")),
+        }
     }
 
     /// Emits the fatal `error` and builds the result, carrying what the run established.
@@ -469,6 +532,7 @@ impl Driver {
         let mut r = fail(&self.emitter, outcome, category, detail);
         r.tests_ref_sha = self.tests_ref_sha.clone();
         r.red_observed = self.red_observed;
+        r.evidence = self.evidence.clone();
         r
     }
 
@@ -632,6 +696,50 @@ impl Driver {
         }
     }
 
+    /// Saves the staged change as `<state_dir>/<name>` and resets the tree. A reset failure
+    /// wins over a patch-write failure, since the tree must not keep the change.
+    fn save_staged_and_reset(&self, name: &str) -> Step<PathBuf> {
+        let patch_path = self.state_dir.join(name);
+        let saved = self
+            .git
+            .staged_patch()
+            .map_err(|e| self.git_fail("cannot save the staged patch", e))
+            .and_then(|p| {
+                fs::write(&patch_path, p)
+                    .map_err(|e| self.harness_error(format!("cannot write the patch file: {e}")))
+            });
+        self.git
+            .reset_clean()
+            .map_err(|e| self.git_fail("cannot reset the workspace", e))?;
+        saved?;
+        Ok(patch_path)
+    }
+
+    /// Pushes `sha` to `refname` within the remaining wall clock. A push ended by the deadline
+    /// or an interrupt halts (R10); any other failure is `push_failed`.
+    fn push(&self, sha: &str, refname: &str, what: &str) -> Step {
+        let pushed = {
+            let _w = Waiting::on(&self.waiting, WaitingOn::Push);
+            self.git.push(
+                &self.wo.repo.remote,
+                sha,
+                refname,
+                self.limits.deadline(),
+                self.env.grace,
+            )
+        };
+        pushed.map_err(|e| {
+            let (outcome, category) = if e.stderr.starts_with("interrupted") {
+                (Outcome::Halted, Category::Interrupted)
+            } else if e.stderr.starts_with("deadline") {
+                (Outcome::Halted, Category::LimitReached)
+            } else {
+                (Outcome::Failed, Category::PushFailed)
+            };
+            self.end(outcome, category, format!("cannot push {what}: {e}"))
+        })
+    }
+
     // --- provision -----------------------------------------------------------------------
 
     fn provision(&mut self) -> Step {
@@ -714,22 +822,8 @@ impl Driver {
                 .map_err(|e| self.git_fail("cannot list the staged paths", e))?;
             let denied = self.rules.denied_hits(&paths);
             if !denied.is_empty() {
-                let patch_path = self
-                    .state_dir
-                    .join(format!("scope-violation-red-{n}.patch"));
-                let saved = self
-                    .git
-                    .staged_patch()
-                    .map_err(|e| self.git_fail("cannot save the staged patch", e))
-                    .and_then(|p| {
-                        fs::write(&patch_path, p).map_err(|e| {
-                            self.harness_error(format!("cannot write the patch file: {e}"))
-                        })
-                    });
-                self.git
-                    .reset_clean()
-                    .map_err(|e| self.git_fail("cannot reset the workspace", e))?;
-                saved?;
+                let patch_path =
+                    self.save_staged_and_reset(&format!("scope-violation-red-{n}.patch"))?;
                 return Err(self.end(
                     Outcome::Failed,
                     Category::ScopeViolation,
@@ -829,6 +923,7 @@ impl Driver {
                     reference: map_path.display().to_string(),
                     sha: None,
                 });
+                self.criteria_map = Some(map_path.display().to_string());
             }
             self.red_files = self
                 .git
@@ -854,26 +949,7 @@ impl Driver {
         let Some(red_sha) = self.red_sha.clone() else {
             return Err(self.harness_error("no red commit to publish"));
         };
-        let pushed = {
-            let _w = Waiting::on(&self.waiting, WaitingOn::Push);
-            self.git.push(
-                &self.wo.repo.remote,
-                &red_sha,
-                &self.wo.tests_ref,
-                self.limits.deadline(),
-                self.env.grace,
-            )
-        };
-        if let Err(e) = pushed {
-            let (outcome, category) = if e.stderr.starts_with("interrupted") {
-                (Outcome::Halted, Category::Interrupted)
-            } else if e.stderr.starts_with("deadline") {
-                (Outcome::Halted, Category::LimitReached)
-            } else {
-                (Outcome::Failed, Category::PushFailed)
-            };
-            return Err(self.end(outcome, category, format!("cannot push the tests ref: {e}")));
-        }
+        self.push(&red_sha, &self.wo.tests_ref, "the tests ref")?;
         let _ = self.emitter.emit(Event::Artifact {
             kind: ArtifactKind::TestsRef,
             reference: self.wo.tests_ref.clone(),
@@ -881,5 +957,190 @@ impl Driver {
         });
         self.tests_ref_sha = Some(red_sha);
         Ok(())
+    }
+
+    // --- green ---------------------------------------------------------------------------
+
+    /// Ends `tests_defective`, with the claim's test and reason in the detail.
+    fn defective(&self, n: u32, claim: &TestsDefective, why: &str) -> ResultEvent {
+        let mut r = self.end(
+            Outcome::Failed,
+            Category::TestsDefective,
+            format!(
+                "green call {n} claims test {:?} is defective: {} ({why})",
+                claim.test, claim.reason
+            ),
+        );
+        r.tests_defective = true;
+        r
+    }
+
+    fn green(&mut self) -> Step {
+        self.stage(Stage::Green, "implementing the story")?;
+        let max = self.wo.green_max_calls.unwrap_or(DEFAULT_GREEN_CALLS);
+        let mut history: Vec<String> = Vec::new();
+        let mut last_tail = String::new();
+        let mut last_log: Option<PathBuf> = None;
+        for n in 1..=max {
+            eprintln!("[reqdrive] green: call {n}");
+            let prompt = green_prompt(
+                &self.wo,
+                &GreenContext {
+                    call: n,
+                    red_files: &self.red_files,
+                    last_test_tail: &last_tail,
+                    history: &history,
+                },
+            );
+            // `agent_call` gates the interrupt, wall clock and turns before the call, and the
+            // tokens after it.
+            let out = self.agent_call(&prompt)?;
+            let claim = out
+                .final_result
+                .as_ref()
+                .and_then(|f| read_claims(&f.text).tests_defective);
+
+            // The denied paths and the freeze, on the staged paths, before any commit.
+            self.git
+                .stage_all()
+                .map_err(|e| self.git_fail("cannot stage the green change", e))?;
+            let paths = self
+                .git
+                .staged_paths()
+                .map_err(|e| self.git_fail("cannot list the staged paths", e))?;
+            let denied = self.rules.denied_hits(&paths);
+            if !denied.is_empty() {
+                let patch_path =
+                    self.save_staged_and_reset(&format!("scope-violation-green-{n}.patch"))?;
+                return Err(self.end(
+                    Outcome::Failed,
+                    Category::ScopeViolation,
+                    format!(
+                        "green call {n} changed denied paths: {}; patch saved to {}",
+                        denied.join(", "),
+                        patch_path.display()
+                    ),
+                ));
+            }
+            let frozen = self.rules.green_violations(&paths, &self.red_files);
+            if !frozen.is_empty() {
+                let patch_path =
+                    self.save_staged_and_reset(&format!("tests-modified-green-{n}.patch"))?;
+                return Err(self.end(
+                    Outcome::Failed,
+                    Category::TestsModified,
+                    format!(
+                        "green call {n} changed frozen tests or paths: {}; patch saved to {}",
+                        frozen.join(", "),
+                        patch_path.display()
+                    ),
+                ));
+            }
+            if paths.is_empty() {
+                history.push(format!("call {n}: no change"));
+                self.warn(format!("green call {n}: no files changed"));
+                if let Some(claim) = claim {
+                    return Err(self.defective(n, &claim, "the call changed nothing"));
+                }
+                continue;
+            }
+
+            let message = format!("feat: [{}] green {n}", self.wo.story.id);
+            self.git
+                .commit(&message)
+                .map_err(|e| self.git_fail("cannot commit the green change", e))?;
+            eprintln!("[reqdrive] green: running the tests after call {n}");
+            let run = self.run_tests(&format!("green-{n}"))?;
+            match run.exit.code {
+                Some(c @ (126 | 127)) => {
+                    return Err(self.harness_error(format!(
+                        "the test command could not run after green call {n} (exit {c}); see {}",
+                        run.log.display()
+                    )))
+                }
+                Some(0) => {
+                    if let Some(claim) = claim {
+                        self.warn(format!(
+                            "green call {n} claimed testsDefective (test {:?}: {}), \
+                             but the tests pass, so delivery goes ahead",
+                            claim.test, claim.reason
+                        ));
+                    }
+                    return Ok(());
+                }
+                code => {
+                    let code =
+                        code.map_or_else(|| "no exit code".to_string(), |c| format!("exit {c}"));
+                    history.push(format!("call {n}: tests failed ({code})"));
+                    if let Some(claim) = claim {
+                        return Err(self.defective(n, &claim, "the tests did not pass"));
+                    }
+                    last_tail = run.tail;
+                    last_log = Some(run.log);
+                }
+            }
+        }
+        let see = last_log
+            .map(|l| format!("; see {}", l.display()))
+            .unwrap_or_default();
+        Err(self.end(
+            Outcome::Failed,
+            Category::TestsFailed,
+            format!("the tests did not pass after {max} green calls{see}"),
+        ))
+    }
+
+    // --- check ---------------------------------------------------------------------------
+
+    fn check(&mut self) -> Step {
+        self.stage(Stage::Check, "running the tests at a clean HEAD")?;
+        // Green's passing run ended with `reset_clean`, so the tree is clean at HEAD.
+        let run = self.run_tests("check")?;
+        self.evidence = Some(Evidence {
+            test_command: self.test_command.clone(),
+            exit_code: run.exit.code,
+            criteria_map: self.criteria_map.clone(),
+        });
+        match run.exit.code {
+            Some(0) => Ok(()),
+            Some(c @ (126 | 127)) => Err(self.harness_error(format!(
+                "the test command could not run at check (exit {c}); see {}",
+                run.log.display()
+            ))),
+            code => {
+                let code = code.map_or_else(|| "no exit code".to_string(), |c| format!("exit {c}"));
+                Err(self.end(
+                    Outcome::Failed,
+                    Category::TestsFailed,
+                    format!(
+                        "the tests fail at a clean HEAD after green passed ({code}); see {}",
+                        run.log.display()
+                    ),
+                ))
+            }
+        }
+    }
+
+    // --- deliver -------------------------------------------------------------------------
+
+    fn deliver(&mut self) -> Step<ResultEvent> {
+        self.stage(Stage::Deliver, "pushing the attempt branch")?;
+        let head = self
+            .git
+            .head()
+            .map_err(|e| self.git_fail("cannot read HEAD", e))?;
+        let branch = self.wo.attempt_branch.clone();
+        self.push(&head, &format!("refs/heads/{branch}"), "the attempt branch")?;
+        let _ = self.emitter.emit(Event::Artifact {
+            kind: ArtifactKind::Branch,
+            reference: branch.clone(),
+            sha: Some(head.clone()),
+        });
+        eprintln!("[reqdrive] result: pushed {head} to {branch}");
+        let mut r = ResultEvent::pushed(head);
+        r.tests_ref_sha = self.tests_ref_sha.clone();
+        r.red_observed = self.red_observed;
+        r.evidence = self.evidence.clone();
+        Ok(r)
     }
 }

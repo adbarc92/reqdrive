@@ -75,7 +75,7 @@ fn base_broken_when_tests_fail_at_base() {
 #[test]
 fn red_publishes_tests_ref() {
     let f = Fixture::new();
-    let (events, code) = f.run(&f.order(), &script(vec![red_ok()]));
+    let (events, code) = f.run(&f.order(), &script(vec![red_ok(), green_ok()]));
     assert_eq!(code, 0);
     let r = result(&events);
     let tests_sha = f.remote_ref(TESTS_REF).expect("tests ref pushed");
@@ -91,7 +91,7 @@ fn red_publishes_tests_ref() {
     assert!(events.iter().any(|e| e["type"] == "artifact"
         && e["kind"] == "tests_ref"
         && e["sha"] == tests_sha.as_str()));
-    assert_eq!(f.calls(), 1);
+    assert_eq!(f.calls(), 2);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn agent_exit_1_is_agent_error() {
 #[test]
 fn events_have_consecutive_seq_and_result_last() {
     let f = Fixture::new();
-    let (events, _) = f.run(&f.order(), &script(vec![red_ok()]));
+    let (events, _) = f.run(&f.order(), &script(vec![red_ok(), green_ok()]));
     let seqs: Vec<u64> = events.iter().map(|e| e["seq"].as_u64().unwrap()).collect();
     assert_eq!(seqs, (1..=events.len() as u64).collect::<Vec<_>>());
     let results = events.iter().filter(|e| e["type"] == "result").count();
@@ -157,7 +157,18 @@ fn events_have_consecutive_seq_and_result_last() {
         .filter(|e| e["type"] == "progress")
         .map(|e| e["stage"].as_str().unwrap())
         .collect();
-    assert_eq!(stages, ["validate", "provision", "red", "red_published"]);
+    assert_eq!(
+        stages,
+        [
+            "validate",
+            "provision",
+            "red",
+            "red_published",
+            "green",
+            "check",
+            "deliver"
+        ]
+    );
     let durable = fs::read_to_string(f.state_dir().join("events.jsonl")).unwrap();
     assert!(durable
         .lines()
