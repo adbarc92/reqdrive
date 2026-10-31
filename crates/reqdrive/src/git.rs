@@ -427,6 +427,8 @@ mod tests {
             plain(&ws, &["config", "user.name", "fixture"]);
             plain(&ws, &["config", "user.email", "fixture@localhost"]);
             plain(&ws, &["config", "commit.gpgsign", "false"]);
+            // CI's Windows runner sets autocrlf=true globally; keep checkouts byte-exact.
+            plain(&ws, &["config", "core.autocrlf", "false"]);
             fs::create_dir_all(ws.join("test")).unwrap();
             fs::write(ws.join("test/a.test"), "one\n").unwrap();
             fs::write(ws.join("keep.txt"), "keep\n").unwrap();
