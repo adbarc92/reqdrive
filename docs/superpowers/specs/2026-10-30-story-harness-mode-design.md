@@ -593,7 +593,9 @@ background, and the shell waits for it.
   done`.
 - **The traps:** the INT, TERM and HUP traps send SIGINT to the PID in `call-<n>.pid` (or to the
   test or git child), wait a grace period, send KILL, set `pending_result` to `halted` and
-  `interrupted`, and exit. The EXIT trap then writes it (§3.1).
+  `interrupted`, and exit. The EXIT trap then writes it (§3.1). In the Rust build the grace applies
+  to the process-group leader: once the leader exits after an interrupt, the whole group is killed
+  at once (§10.2).
 - **Telling a limit from an interruption:** a token-limit SIGINT and an outside SIGINT look alike
   to the child. So before signalling, the watchdog writes `<state_dir>/limit_hit`. When it exists,
   the stage sets `pending_result` to `halted` and `limit_reached`.
@@ -902,7 +904,7 @@ crate: std threads and channels are enough, and there is one subcommand.
 | fd 3/fd 4, a jq emitter, `run_child` | One `Emitter` behind an `Arc<Mutex<…>>` owns stdout and `events.jsonl`. It adds `v`, `attempt_id`, `seq` and `ts` last, so a body can never set them. Every child is spawned with an explicit `stdout` (piped or a file) and `stdin` set to null. Without that, std would let the child inherit our stdout. A write error on stdout is the one case that ends with a non-zero exit |
 | `trap '' PIPE` and restoring it | Rust ignores SIGPIPE in its own process, and std resets it to the default in spawned children on Unix |
 | The EXIT trap and `pending_result` | `story::run` returns a `ResultEvent` on every path. Errors are values. Every failing path goes through one `end()` that also emits the fatal `error` event. `run` stops and joins the heartbeat thread before it returns. `main` wraps `run` in `catch_unwind`, then calls `Emitter::finish(result)`, which writes the result once, also writes `<state_dir>/result.json`, and refuses any later event. It then exits 0 |
-| `timeout -s INT -k 30` and wait loops | `proc::supervise` polls `try_wait` every 100 ms. When the deadline passes, the interrupt flag is set, or the token limit is hit, it interrupts the child and kills it if it is still running 30 s later. It returns `Exit { code, ended_by: Normal \| Deadline \| Interrupted \| TokenLimit }`. On Unix every child is spawned in its own process group (`process_group(0)`), and SIGINT and SIGKILL go to the group, so grandchildren under `sh -c` stop too. On Windows only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`, not a `.cmd` shim. Job Objects are deferred |
+| `timeout -s INT -k 30` and wait loops | `proc::supervise` polls `try_wait` every 100 ms. When the deadline passes, the interrupt flag is set, or the token limit is hit, it interrupts the child and kills it if it is still running 30 s later. It returns `Exit { code, ended_by: Normal \| Deadline \| Interrupted \| TokenLimit }`. On Unix every child is spawned in its own process group (`process_group(0)`), and SIGINT and SIGKILL go to the group, so grandchildren under `sh -c` stop too. On Windows only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`, not a `.cmd` shim. Job Objects are deferred. The 30 s grace applies to the group's leader: once the leader exits after an interrupt, the whole group is killed at once, because background grandchildren ignore SIGINT under a non-interactive `sh` |
 | Traps for INT, TERM and HUP | `ctrlc` with `termination` replaces the default action for SIGINT, SIGTERM and SIGHUP on Unix, and for Ctrl-C and Ctrl-Break on Windows. It sets an `AtomicBool` that the supervisor and the driver poll before every step. Closing the console on Windows ends the process without a result |
 | Hooks bypassed with `--no-verify` | Every git call also passes `-c core.hooksPath=<state_dir>/no-hooks`, an empty directory. `--no-verify` alone leaves `prepare-commit-msg`, `post-checkout` and `reference-transaction` running |
 | Exit 126/127 means the runner is missing | Unix only. On Windows `cmd` reports a missing command as exit 1, so a missing runner shows up as `base_broken` at provision instead |
@@ -950,6 +952,11 @@ crate: std threads and channels are enough, and there is one subcommand.
   orchestrator is stopping the attempt, and a network call would delay the exit.
 - **No push without a deadline.** Pushes are supervised with the remaining wall clock, like every
   other child.
+- **A push cut short by a limit or an interrupt** ends `halted` (`limit_reached` or `interrupted`),
+  not `failed` with `push_failed`: the "any" rows of §3.5.1 outrank the push row.
+- **`head_sha` on `failed` and `halted` results** is set only when the evidence push succeeded,
+  because a local-only sha cannot be verified by the orchestrator. No evidence push follows a
+  `push_failed`.
 
 The Bash suite's freeze gate is archived with it. A hash lock over contract tests, as the factory
 plans have it, is not part of v1.
