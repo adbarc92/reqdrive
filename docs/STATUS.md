@@ -10,14 +10,14 @@ session log below it is appended newest first.
   and a scoped re-review confirmed every fix. One older Windows issue (handle inheritance) is on
   the roadmap.
   The live check against the real `claude` CLI has not run: it waits for the owner's go-ahead.
-- **Branch:** `feat/story-harness-rust`, not merged. No pull request is open yet.
+- **Branch:** `feat/story-harness-rust`, not merged. PR #7, stacked on the spec PR #6.
 - **Readiness:** the three checks (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test`) pass on Windows. The first CI run on Linux has not happened, so the Unix-only code
   and tests are not yet compiled there; that run is the merge gate.
 - **Known gaps:** see [`ROADMAP.md`](../ROADMAP.md) (deferred scope, open questions Q4 to Q14,
   planned improvements, known minor issues).
 - **Next steps:**
-  1. Push, open a PR, and confirm CI is green on Linux and Windows.
+  1. Confirm CI on PR #7 is green on Linux and Windows; merge #6, then #7.
   2. Run the live check once the owner gives the go-ahead (ROADMAP, Next).
 
 Design: [`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](superpowers/specs/2026-10-30-story-harness-mode-design.md).
