@@ -575,15 +575,15 @@ impl Driver {
         log(&self.emitter, LogStream::System, line);
     }
 
-    /// Checked before every stage, agent call, test run and push.
+    /// Checked before every stage, agent call, test run and push. Turns are only spent by agent
+    /// calls, so [`Self::agent_call`] checks them itself; finished work still gets its tests
+    /// and pushes.
     fn gate(&self) -> Step {
         if proc::interrupted() {
             return Err(self.end(Outcome::Halted, Category::Interrupted, "interrupted"));
         }
         let why = if self.limits.remaining().is_none() {
             Some("the wall-clock limit was reached")
-        } else if self.limits.turns_left() == 0 {
-            Some("the turn limit was reached")
         } else if self.limits.tokens_exhausted() {
             Some("the token limit was reached")
         } else {
@@ -720,6 +720,13 @@ impl Driver {
     /// `label` (`red-<n>` or `green-<n>`) names the patch file if the agent ran git.
     fn agent_call(&mut self, prompt: &str, label: &str) -> Step<CallOutcome> {
         self.gate()?;
+        if self.limits.turns_left() == 0 {
+            return Err(self.end(
+                Outcome::Halted,
+                Category::LimitReached,
+                "the turn limit was reached",
+            ));
+        }
         self.call_index += 1;
         let index = self.call_index;
         let max_turns = self.limits.turns_left();
@@ -786,8 +793,16 @@ impl Driver {
                 format!("agent call {index} failed ({code}); see call-{index}.stderr.log"),
             ));
         }
-        self.limits
-            .spend_turns(final_result.and_then(|f| f.num_turns).unwrap_or(max_turns));
+        let turns = match final_result.and_then(|f| f.num_turns) {
+            Some(t) => t,
+            None => {
+                self.warn(format!(
+                    "warning: agent call {index} reported no num_turns; counting it as 1 turn"
+                ));
+                1
+            }
+        };
+        self.limits.spend_turns(turns);
         if self.limits.tokens_exhausted() {
             return Err(self.end(
                 Outcome::Halted,

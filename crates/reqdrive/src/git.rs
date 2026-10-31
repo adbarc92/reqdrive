@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::proc::{spawn_grouped, supervise, EndedBy};
+use crate::proc::{scrub_repo_env, spawn_grouped, supervise, EndedBy};
 
 #[derive(Debug)]
 pub struct GitError {
@@ -83,9 +83,16 @@ impl Git {
                 "core.fsmonitor=false",
                 "-c",
                 "protocol.ext.allow=never",
+                // No background gc or maintenance left running in the workspace.
+                "-c",
+                "gc.auto=0",
+                "-c",
+                "maintenance.auto=false",
             ])
             .stdin(Stdio::null())
             .env("GIT_TERMINAL_PROMPT", "0");
+        // `-C <ws>` alone does not win over these.
+        scrub_repo_env(&mut cmd);
         for (k, v) in &self.env {
             cmd.env(k, v);
         }
@@ -307,7 +314,18 @@ impl Git {
     ) -> Res<()> {
         static N: AtomicU64 = AtomicU64::new(0);
         let refspec = format!("{sha}:{refname}");
-        let args = ["push", "--no-verify", "--", remote, refspec.as_str()];
+        // Exactly the one ref: no tags, no submodule pushes.
+        let args = [
+            "-c",
+            "push.followTags=false",
+            "-c",
+            "push.recurseSubmodules=no",
+            "push",
+            "--no-verify",
+            "--",
+            remote,
+            refspec.as_str(),
+        ];
         let joined = args.join(" ");
         let fail = |code: Option<i32>, stderr: String| GitError {
             args: joined.clone(),
@@ -579,6 +597,56 @@ mod tests {
             .unwrap_err();
         assert!(err.code.is_some());
         assert!(!err.stderr.is_empty());
+    }
+
+    #[test]
+    fn push_ignores_workspace_follow_tags() {
+        let f = Fixture::new();
+        let g = f.git();
+        let bare = f.tmp.path().join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        plain(&bare, &["init", "-q", "--bare"]);
+        plain(&f.ws, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        plain(&f.ws, &["config", "push.followTags", "true"]);
+        plain(&f.ws, &["tag", "-a", "-m", "t", "v1"]);
+        let sha = g.head().unwrap();
+        g.push(
+            "origin",
+            &sha,
+            "refs/heads/pushed",
+            Instant::now() + Duration::from_secs(30),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let tags = plain(&bare, &["tag", "--list"]);
+        assert!(String::from_utf8_lossy(&tags.stdout).trim().is_empty());
+    }
+
+    #[test]
+    fn base_scrubs_repo_env_and_disables_auto_gc() {
+        let f = Fixture::new();
+        let cmd = f.git().base();
+        let envs: Vec<_> = cmd.get_envs().collect();
+        for name in crate::proc::REPO_ENV {
+            assert!(
+                envs.iter()
+                    .any(|(k, v)| k.to_str() == Some(name) && v.is_none()),
+                "{name} is not removed"
+            );
+        }
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.windows(2).any(|w| w == ["-c", "gc.auto=0"]),
+            "{args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["-c", "maintenance.auto=false"]),
+            "{args:?}"
+        );
     }
 
     #[test]

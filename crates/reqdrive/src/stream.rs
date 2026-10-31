@@ -160,19 +160,24 @@ impl StreamParser {
                 if totals.iter().zip(s.iter()).all(|(t, s)| t <= s) {
                     continue;
                 }
-                let d: Vec<u64> = totals
+                // A total the result did not report stays unknown in the residue.
+                let d: Vec<Option<u64>> = [t.input, t.output, t.cache_read, t.cache_write]
                     .iter()
                     .zip(s.iter())
-                    .map(|(t, s)| t.saturating_sub(*s))
+                    .map(|(t, s)| t.map(|t| t.saturating_sub(*s)))
                     .collect();
+                let prompt = match (d[0], d[3], d[2]) {
+                    (Some(i), Some(w), Some(r)) => Some(i + w + r),
+                    _ => None,
+                };
                 residue.push(UsageRow {
                     call_seq: None,
                     model_id: Some(model.clone()),
                     provider: self.provider.clone(),
-                    prompt: Some(d[0] + d[3] + d[2]),
-                    cached_prompt: Some(d[2]),
-                    cache_write: Some(d[3]),
-                    output: Some(d[1]),
+                    prompt,
+                    cached_prompt: d[2],
+                    cache_write: d[3],
+                    output: d[1],
                     thinking: None,
                     attributed: false,
                 });
@@ -263,6 +268,19 @@ mod tests {
         assert_eq!(r.call_seq, None);
         assert!(!r.attributed);
         assert_eq!(r.provider, "anthropic");
+    }
+
+    #[test]
+    fn residue_unknown_totals_are_null() {
+        let mut p = StreamParser::new(1, "p".into());
+        p.feed(r#"{"type":"result","subtype":"success","modelUsage":{"other":{"inputTokens":4,"cacheReadInputTokens":3}}}"#);
+        let sum = p.finish();
+        assert_eq!(sum.residue.len(), 1);
+        let r = &sum.residue[0];
+        assert_eq!(r.prompt, None, "cache writes are unknown");
+        assert_eq!(r.cached_prompt, Some(3));
+        assert_eq!(r.cache_write, None);
+        assert_eq!(r.output, None);
     }
 
     #[test]

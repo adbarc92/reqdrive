@@ -1,7 +1,7 @@
 //! `reqdrive story <work-order.json>`: runs one work order and writes JSON-lines events to
 //! stdout, the last of which is the result.
 
-use reqdrive::events::Emitter;
+use reqdrive::events::{Emitter, Event, Stage};
 use reqdrive::outcome::{Category, Outcome, ResultEvent};
 use reqdrive::{proc, story};
 use std::any::Any;
@@ -29,6 +29,8 @@ fn story_command(work_order: &Path) -> i32 {
         .unwrap_or_else(|p| {
             let detail = format!("the harness panicked: {}", panic_message(p.as_ref()));
             let _ = emitter.error(Category::HarnessError, detail.clone());
+            // `story::run` emits `done` on every path it returns from; a panic skips it.
+            let _ = emitter.emit(Event::Progress { stage: Stage::Done });
             ResultEvent::end(Outcome::Failed, Category::HarnessError, detail)
         });
     match emitter.finish(&result) {

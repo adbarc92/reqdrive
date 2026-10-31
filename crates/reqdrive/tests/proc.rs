@@ -116,6 +116,19 @@ fn run_tests_tail_is_bounded() {
     assert!(run.tail.ends_with('\n'));
 }
 
+#[test]
+fn shell_removes_repo_locating_env() {
+    let cmd = reqdrive::proc::shell("true");
+    let envs: Vec<_> = cmd.get_envs().collect();
+    for name in reqdrive::proc::REPO_ENV {
+        assert!(
+            envs.iter()
+                .any(|(k, v)| k.to_str() == Some(name) && v.is_none()),
+            "{name} is not removed"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn interrupt_reaches_grandchild() {

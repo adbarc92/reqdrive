@@ -1,6 +1,17 @@
 use crate::workorder::WorkOrder;
 
-pub const DEFAULT_DENIED: [&str; 5] = [".github", ".husky", ".claude", ".mcp.json", ".gitmodules"];
+/// Forge CI config (it runs on push), hook managers, agent config that loads into the next
+/// call, and submodules.
+pub const DEFAULT_DENIED: [&str; 8] = [
+    ".github",
+    ".forgejo",
+    ".gitea",
+    ".gitlab-ci.yml",
+    ".husky",
+    ".claude",
+    ".mcp.json",
+    ".gitmodules",
+];
 
 /// Fold a path to the form the denied-path checks compare. `\` becomes `/`, ASCII case is
 /// folded, a leading `./` is dropped, and trailing `.` and ` ` are stripped from every
@@ -160,8 +171,25 @@ mod tests {
         }))
         .unwrap();
         let r = PathRules::from_order(&wo);
-        let hits = r.denied_hits(&s(&[".github/workflows/ci.yml", ".mcp.json", "src/x.rs"]));
-        assert_eq!(hits, s(&[".github/workflows/ci.yml", ".mcp.json"]));
+        let hits = r.denied_hits(&s(&[
+            ".github/workflows/ci.yml",
+            ".mcp.json",
+            "src/x.rs",
+            ".forgejo/workflows/x.yml",
+            ".gitea/workflows/x.yml",
+            ".gitlab-ci.yml",
+            "ci/.gitlab-ci.yml",
+        ]));
+        assert_eq!(
+            hits,
+            s(&[
+                ".github/workflows/ci.yml",
+                ".mcp.json",
+                ".forgejo/workflows/x.yml",
+                ".gitea/workflows/x.yml",
+                ".gitlab-ci.yml",
+            ])
+        );
         assert_eq!(r.denied.len(), DEFAULT_DENIED.len());
     }
 

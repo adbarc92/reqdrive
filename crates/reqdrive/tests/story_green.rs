@@ -416,3 +416,34 @@ fn test_command_commit_after_green_is_never_pushed() {
     let head = git(&f.ws, &["log", "-1", "--format=%s"]);
     assert_ne!(head, "sneaky");
 }
+
+#[test]
+fn turns_spent_by_the_last_call_do_not_stop_tests_or_delivery() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    order["limits"]["turns"] = json!(2);
+    // Red and green take one turn each, leaving none for the test runs and pushes after.
+    let (events, code) = f.run(&order, &script(vec![red_ok(), green_ok()]));
+    assert_eq!(code, 0);
+    let r = result(&events);
+    assert_eq!(r["outcome"], "pushed", "{r}");
+}
+
+#[test]
+fn result_without_num_turns_spends_one_turn() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    order["limits"]["turns"] = json!(2);
+    let mut red = red_ok();
+    red["lines"] = json!([r#"{"type":"result","subtype":"success","is_error":false,"result":""}"#]);
+    let (events, code) = f.run(&order, &script(vec![red, green_ok()]));
+    assert_eq!(code, 0);
+    let r = result(&events);
+    assert_eq!(r["outcome"], "pushed", "{r}");
+    assert!(
+        events
+            .iter()
+            .any(|e| e["type"] == "log" && e["line"].as_str().unwrap_or("").contains("num_turns")),
+        "{events:?}"
+    );
+}
