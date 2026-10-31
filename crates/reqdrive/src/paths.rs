@@ -2,12 +2,32 @@ use crate::workorder::WorkOrder;
 
 pub const DEFAULT_DENIED: [&str; 5] = [".github", ".husky", ".claude", ".mcp.json", ".gitmodules"];
 
+/// Fold a path to the form the denied-path checks compare. `\` becomes `/`, ASCII case is
+/// folded, a leading `./` is dropped, and trailing `.` and ` ` are stripped from every
+/// component (Windows ignores them), except that a component made only of dots (`.`, `..`)
+/// is left alone. Case-insensitive file systems (Windows, macOS) resolve these variants to
+/// the same file, so over-matching is the safe direction.
 fn norm(s: &str) -> String {
-    s.replace('\\', "/")
+    let s = s.replace('\\', "/").to_ascii_lowercase();
+    let mut s = s.as_str();
+    while let Some(rest) = s.strip_prefix("./") {
+        s = rest;
+    }
+    s.split('/')
+        .map(|c| {
+            if !c.is_empty() && c.bytes().all(|b| b == b'.') {
+                c
+            } else {
+                c.trim_end_matches(['.', ' '])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
-/// True if `path == prefix` or `path` starts with `prefix + "/"`. `\` counts as `/`, and a
-/// trailing `/` on `prefix` is ignored. An empty prefix matches nothing.
+/// True if `path == prefix` or `path` starts with `prefix + "/"`, after `norm` on both
+/// (so `\` counts as `/`, case and trailing dots/spaces are ignored). A trailing `/` on
+/// `prefix` is ignored. An empty prefix matches nothing.
 pub fn under(path: &str, prefix: &str) -> bool {
     let path = norm(path);
     let prefix = norm(prefix);
@@ -101,6 +121,31 @@ mod tests {
         assert!(!under("src/authz", "src/auth"));
         assert!(under("a\\b", "a"));
         assert!(!under("a", ""));
+    }
+
+    #[test]
+    fn under_ignores_case_trailing_dots_spaces_and_dot_slash() {
+        assert!(under(".CLAUDE/settings.json", ".claude"));
+        assert!(under(".GitHub/workflows/x.yml", ".github"));
+        assert!(under(".claude./x", ".claude"));
+        assert!(under(".claude /x", ".claude"));
+        assert!(under(".claude.", ".claude"));
+        assert!(under("./src/a", "src"));
+        assert!(under("src/a", "./src"));
+        assert!(under("SRC\\A", "src/a/"));
+        assert!(!under("src/authz", "SRC/auth"));
+        assert!(!under("src/../x", "src/x"));
+        assert!(!under("src/.x", "src/y"));
+    }
+
+    #[test]
+    fn denied_hits_catch_case_variants() {
+        let r = rules();
+        assert_eq!(
+            r.denied_hits(&s(&[".MCP.JSON", "src/x"])),
+            s(&[".MCP.JSON"])
+        );
+        assert_eq!(r.denied_hits(&s(&[".GITHUB./a"])), s(&[".GITHUB./a"]));
     }
 
     #[test]

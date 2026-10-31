@@ -4,12 +4,17 @@
 /// Lines of a `git diff -U0` that were added, without the leading `+` and any trailing `\r`.
 /// The `+++` file header is not an added line.
 pub fn added_lines(diff_u0: &str) -> String {
-    diff_u0
-        .lines()
-        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
-        .map(|l| l[1..].trim_end_matches('\r'))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut out = Vec::new();
+    let mut prev = "";
+    for l in diff_u0.lines() {
+        // A real file header is `+++ ` right after `--- `; `+++i;` is an added `++i;`.
+        let header = l.starts_with("+++") && prev.starts_with("--- ");
+        if l.starts_with('+') && !header {
+            out.push(l[1..].trim_end_matches('\r'));
+        }
+        prev = l;
+    }
+    out.join("\n")
 }
 
 fn is_word(b: u8) -> bool {
@@ -50,6 +55,14 @@ mod tests {
     fn id_at_line_end_with_crlf() {
         let added = added_lines("+test AC-2\r\n");
         assert!(missing_ids(&added, &["AC-2".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn added_line_starting_with_plus_plus_is_kept() {
+        let diff = "--- a/t.c\n+++ b/t.c\n@@ -1 +1 @@\n-x\n+++i; // AC-3\n";
+        let added = added_lines(diff);
+        assert_eq!(added, "++i; // AC-3");
+        assert!(missing_ids(&added, &["AC-3".to_string()]).is_empty());
     }
 
     #[test]
