@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "reqdrive"
 path = "src/main.rs"
 
+[[bin]]
+name = "fake-claude"
+path = "src/bin/fake-claude.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
