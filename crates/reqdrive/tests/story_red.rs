@@ -18,6 +18,12 @@ fn unparsable_order_gives_work_order_invalid_with_null_attempt() {
     assert_eq!(r["failure"]["retryable"], false);
     assert!(r["attempt_id"].is_null(), "{r}");
     assert_eq!(f.calls(), 0);
+    let done: Vec<&serde_json::Value> = events
+        .iter()
+        .filter(|e| e["type"] == "progress" && e["stage"] == "done")
+        .collect();
+    assert_eq!(done.len(), 1, "done is emitted once on a failure path too");
+    assert_eq!(events[events.len() - 2]["stage"], "done");
 }
 
 #[test]
@@ -166,7 +172,8 @@ fn events_have_consecutive_seq_and_result_last() {
             "red_published",
             "green",
             "check",
-            "deliver"
+            "deliver",
+            "done"
         ]
     );
     let durable = fs::read_to_string(f.state_dir().join("events.jsonl")).unwrap();

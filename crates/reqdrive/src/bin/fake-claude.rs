@@ -6,7 +6,8 @@
 //! - `fake-claude spew <bytes>`: prints that many bytes of text and exits 0.
 //! - Otherwise it acts as `claude`, driven by the JSON script `$FAKE_CLAUDE_SCRIPT`
 //!   (`{"calls":[…]}`), picking the call from the counter file `$FAKE_CLAUDE_COUNTER` and
-//!   logging its argv to `$FAKE_CLAUDE_LOG`.
+//!   logging its argv to `$FAKE_CLAUDE_LOG`. A call's optional `git_commit_all: "<msg>"` runs
+//!   `git add -A` and `git commit` in the current directory after its `writes`.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -119,6 +120,30 @@ fn act_as_claude(args: &[String]) -> i32 {
     if let Some(deletes) = call["deletes"].as_array() {
         for rel in deletes.iter().filter_map(Value::as_str) {
             let _ = fs::remove_file(rel);
+        }
+    }
+    // An agent that runs git itself, as it can under bypassPermissions.
+    if let Some(msg) = call["git_commit_all"].as_str() {
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=f",
+                    "-c",
+                    "user.email=f@x",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if !(git(&["add", "-A"]) && git(&["commit", "-q", "--no-verify", "-m", msg])) {
+            return 4;
         }
     }
 

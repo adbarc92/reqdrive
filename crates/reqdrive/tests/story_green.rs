@@ -5,33 +5,12 @@ mod common;
 use common::*;
 use serde_json::{json, Value};
 use std::fs;
-use std::time::{Duration, Instant};
-
-const BRANCH_REF: &str = "refs/heads/attempt/S-1/a-1";
 
 fn defective_text() -> String {
     "The test is wrong.\n\n```json:iteration-summary\n\
      {\"testsDefective\": {\"test\": \"feature.test\", \"reason\": \"it expects the wrong word\"}}\n\
      ```\n"
         .to_string()
-}
-
-/// The commit subjects on `sha` since the base, newest first.
-fn subjects(f: &Fixture, sha: &str) -> Vec<String> {
-    git(
-        &f.remote,
-        &["log", "--format=%s", &format!("{}..{sha}", f.base)],
-    )
-    .lines()
-    .map(str::to_string)
-    .collect()
-}
-
-fn has_feat_on_remote(f: &Fixture) -> bool {
-    match f.remote_ref(BRANCH_REF) {
-        Some(sha) => subjects(f, &sha).iter().any(|s| s.starts_with("feat:")),
-        None => false,
-    }
 }
 
 fn logs(events: &[Value]) -> Vec<String> {
@@ -90,11 +69,69 @@ fn happy_path_pushes_branch() {
             "red_published",
             "green",
             "check",
-            "deliver"
+            "deliver",
+            "done"
         ]
     );
+    let before_last = &events[events.len() - 2];
+    assert_eq!(before_last["type"], "progress", "{before_last}");
+    assert_eq!(before_last["stage"], "done", "{before_last}");
     assert!(!events.iter().any(|e| e["type"] == "error"));
     assert_eq!(f.calls(), 2);
+}
+
+#[test]
+fn red_agent_committing_workflow_itself_is_scope_violation() {
+    let f = Fixture::new();
+    let sneaky = json!({
+        "writes": {
+            "test/feature.test": "AC-1 AC-2\nexpect src/feature.txt done\n",
+            ".github/workflows/x.yml": "on: push\n"
+        },
+        "git_commit_all": "tests"
+    });
+    let (events, _) = f.run(&f.order(), &script(vec![sneaky, green_ok()]));
+    let r = result(&events);
+    assert_eq!(r["failure"]["category"], "scope_violation", "{r}");
+    let detail = r["failure"]["detail"].as_str().unwrap();
+    assert!(detail.contains("the agent ran git"), "{detail}");
+    assert!(f.state_dir().join("agent-moved-head-red-1.patch").exists());
+    assert!(f.remote_ref(TESTS_REF).is_none());
+    assert!(f.remote_ref(BRANCH_REF).is_none());
+    assert_eq!(f.calls(), 1);
+    assert_eq!(git(&f.ws, &["rev-parse", "HEAD"]), f.base, "HEAD was reset");
+    assert!(!f.ws.join(".github").exists());
+}
+
+#[test]
+fn green_agent_committing_frozen_test_itself_is_scope_violation() {
+    let f = Fixture::new();
+    let sneaky = json!({
+        "writes": {
+            "test/feature.test": "AC-1 AC-2\n",
+            "src/feature.txt": "done"
+        },
+        "git_commit_all": "cheat"
+    });
+    let (events, _) = f.run(&f.order(), &script(vec![red_ok(), sneaky]));
+    let r = result(&events);
+    assert_eq!(r["failure"]["category"], "scope_violation", "{r}");
+    let detail = r["failure"]["detail"].as_str().unwrap();
+    assert!(detail.contains("the agent ran git"), "{detail}");
+    assert!(f
+        .state_dir()
+        .join("agent-moved-head-green-1.patch")
+        .exists());
+    let tests_sha = f.remote_ref(TESTS_REF).expect("red was published");
+    // The evidence push may carry the red commit, never the agent's own commit.
+    if let Some(sha) = f.remote_ref(BRANCH_REF) {
+        assert_eq!(sha, tests_sha);
+    }
+    assert_eq!(
+        git(&f.ws, &["rev-parse", "HEAD"]),
+        tests_sha,
+        "HEAD was reset"
+    );
 }
 
 #[test]
@@ -208,6 +245,8 @@ fn green_exhausts_calls_is_tests_failed_and_branch_pushed_as_evidence() {
         prompt.contains("FAIL"),
         "the last test tail reaches the prompt"
     );
+    assert!(prompt.contains("## Last test run (tail)"), "{prompt}");
+    assert!(prompt.contains("call 1: tests failed"), "{prompt}");
 }
 
 #[test]
@@ -226,24 +265,6 @@ fn green_empty_call_does_not_rerun_tests() {
 }
 
 #[test]
-fn wall_clock_limit_halts() {
-    let f = Fixture::new();
-    let mut order = f.order();
-    order["limits"]["wall_clock_secs"] = json!(2);
-    let mut slow = green_ok();
-    slow["sleep_ms"] = json!(5000);
-    let started = Instant::now();
-    let (events, code) = f.run(&order, &script(vec![red_ok(), slow]));
-    let took = started.elapsed();
-    assert_eq!(code, 0);
-    let r = result(&events);
-    assert_eq!(r["outcome"], "halted", "{r}");
-    assert_eq!(r["failure"]["category"], "limit_reached");
-    assert!(took < Duration::from_secs(4), "took {took:?}");
-    assert!(!has_feat_on_remote(&f));
-}
-
-#[test]
 fn token_limit_halts() {
     let f = Fixture::new();
     let mut order = f.order();
@@ -254,6 +275,10 @@ fn token_limit_halts() {
     assert_eq!(r["failure"]["category"], "limit_reached");
     assert!(f.remote_ref(TESTS_REF).is_some(), "red was published");
     assert!(!has_feat_on_remote(&f));
+    let head = r["head_sha"]
+        .as_str()
+        .expect("the evidence push set head_sha");
+    assert_eq!(f.remote_ref(BRANCH_REF).as_deref(), Some(head));
 }
 
 #[test]

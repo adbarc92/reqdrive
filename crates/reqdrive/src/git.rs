@@ -261,6 +261,22 @@ impl Git {
         ])
     }
 
+    /// A full binary patch from `from` to `to`, for evidence files.
+    pub fn diff_patch(&self, from: &str, to: &str) -> Res<String> {
+        if let Some(bad) = [from, to].into_iter().find(|a| dashed(a)) {
+            return Err(reject("diff --binary", bad));
+        }
+        self.run(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "--no-color",
+            from,
+            to,
+        ])
+    }
+
     pub fn changed_files(&self, from: &str, to: &str) -> Res<Vec<String>> {
         if let Some(bad) = [from, to].into_iter().find(|a| dashed(a)) {
             return Err(reject("diff --name-only", bad));

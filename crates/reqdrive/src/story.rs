@@ -64,10 +64,12 @@ pub fn run(work_order: &Path, emitter: &Emitter, env: &Env) -> ResultEvent {
         Ok(mut driver) => driver.drive(),
         Err(r) => r,
     };
-    match heartbeat.stop() {
+    let result = match heartbeat.stop() {
         Ok(()) => result,
         Err(detail) => fail(emitter, Outcome::Failed, Category::HarnessError, detail),
-    }
+    };
+    progress(emitter, Stage::Done, "writing the result");
+    result
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -499,6 +501,17 @@ impl Driver {
         if head == self.wo.base_commit {
             return;
         }
+        match self.forbidden_in(&head) {
+            Ok(None) => {}
+            Ok(Some((_, what))) => {
+                self.warn(format!("evidence push skipped: {head} changes {what}"));
+                return;
+            }
+            Err(e) => {
+                self.warn(format!("evidence push skipped: cannot list its files: {e}"));
+                return;
+            }
+        }
         let refname = format!("refs/heads/{}", self.wo.attempt_branch);
         let pushed = {
             let _w = Waiting::on(&self.waiting, WaitingOn::Push);
@@ -574,9 +587,107 @@ impl Driver {
         Ok(())
     }
 
+    /// What pushing `head` would carry that the checks forbid: a denied path changed since the
+    /// base, or a red file, test path or frozen path changed since the red commit. A second
+    /// line behind the staged-path checks, for commits the shell did not make.
+    fn forbidden_in(&self, head: &str) -> Result<Option<(Category, String)>, GitError> {
+        let all = self.git.changed_files(&self.wo.base_commit, head)?;
+        let denied = self.rules.denied_hits(&all);
+        if !denied.is_empty() {
+            return Ok(Some((
+                Category::ScopeViolation,
+                format!("denied paths: {}", denied.join(", ")),
+            )));
+        }
+        if let Some(red) = self.red_sha.as_deref().filter(|red| *red != head) {
+            let since = self.git.changed_files(red, head)?;
+            let frozen = self.rules.green_violations(&since, &self.red_files);
+            if !frozen.is_empty() {
+                return Ok(Some((
+                    Category::TestsModified,
+                    format!("frozen tests or paths: {}", frozen.join(", ")),
+                )));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The shell makes every commit. An agent that ran git itself (it can under
+    /// bypassPermissions) has moved HEAD or left the attempt branch. Its commits and its
+    /// uncommitted changes are saved as `agent-moved-head-<label>.patch`, the attempt branch
+    /// is reset to `expected`, and the attempt ends `scope_violation`, so nothing it committed
+    /// can be pushed.
+    fn check_head(&self, expected: &str, label: &str) -> Step {
+        let head = self
+            .git
+            .head()
+            .map_err(|e| self.git_fail("cannot read HEAD after the agent call", e))?;
+        let branch = self
+            .git
+            .current_branch()
+            .map_err(|e| self.git_fail("cannot read the branch after the agent call", e))?;
+        let on_branch = branch.as_deref() == Some(self.wo.attempt_branch.as_str());
+        if head == expected && on_branch {
+            return Ok(());
+        }
+        let patch_path = self
+            .state_dir
+            .join(format!("agent-moved-head-{label}.patch"));
+        let committed = self
+            .git
+            .diff_patch(expected, &head)
+            .unwrap_or_else(|e| format!("# cannot diff {expected}..{head}: {e}\n"));
+        let uncommitted = self
+            .git
+            .stage_all()
+            .and_then(|()| self.git.staged_patch())
+            .unwrap_or_else(|e| format!("# cannot save the uncommitted changes: {e}\n"));
+        let written = fs::write(
+            &patch_path,
+            format!(
+                "# commits the agent made: {expected}..{head}\n{committed}\n\
+                 # changes the agent left uncommitted\n{uncommitted}"
+            ),
+        );
+        self.git
+            .reset_clean()
+            .map_err(|e| self.git_fail("cannot reset the workspace", e))?;
+        if !on_branch {
+            self.git
+                .switch(&self.wo.attempt_branch)
+                .map_err(|e| self.git_fail("cannot switch back to the attempt branch", e))?;
+        }
+        self.git
+            .reset_to(expected)
+            .map_err(|e| self.git_fail("cannot undo the agent's commits", e))?;
+        written.map_err(|e| self.harness_error(format!("cannot write the patch file: {e}")))?;
+        let left = if on_branch {
+            String::new()
+        } else {
+            format!(
+                " and left {} for {}",
+                self.wo.attempt_branch,
+                branch.as_deref().unwrap_or("a detached HEAD")
+            )
+        };
+        Err(self.end(
+            Outcome::Failed,
+            Category::ScopeViolation,
+            format!(
+                "the agent ran git: HEAD moved from {expected} to {head}{left}; patch saved to {}",
+                patch_path.display()
+            ),
+        ))
+    }
+
     /// One agent call, with its exit mapped to a result and its turns and tokens counted.
-    fn agent_call(&mut self, prompt: &str) -> Step<CallOutcome> {
+    /// `label` (`red-<n>` or `green-<n>`) names the patch file if the agent ran git.
+    fn agent_call(&mut self, prompt: &str, label: &str) -> Step<CallOutcome> {
         self.gate()?;
+        let expected = self
+            .git
+            .head()
+            .map_err(|e| self.git_fail("cannot read HEAD before the agent call", e))?;
         self.call_index += 1;
         let index = self.call_index;
         let max_turns = self.limits.turns_left();
@@ -597,6 +708,8 @@ impl Driver {
         let out = called
             .map_err(|e| self.harness_error(format!("agent call {index} could not run: {e}")))?;
         self.next_call_seq = out.next_call_seq;
+        // Before the exit is judged, so a limit or an error cannot leave the agent's commits.
+        self.check_head(&expected, label)?;
         match out.exit.ended_by {
             EndedBy::Deadline => {
                 return Err(self.end(
@@ -717,7 +830,18 @@ impl Driver {
 
     /// Pushes `sha` to `refname` within the remaining wall clock. A push ended by the deadline
     /// or an interrupt halts (R10); any other failure is `push_failed`.
+    /// Refuses, before any network call, a commit that [`Self::forbidden_in`] rejects.
     fn push(&self, sha: &str, refname: &str, what: &str) -> Step {
+        let forbidden = self
+            .forbidden_in(sha)
+            .map_err(|e| self.git_fail("cannot list the files to push", e))?;
+        if let Some((category, changes)) = forbidden {
+            return Err(self.end(
+                Outcome::Failed,
+                category,
+                format!("refusing to push {what}: {sha} changes {changes}"),
+            ));
+        }
         let pushed = {
             let _w = Waiting::on(&self.waiting, WaitingOn::Push);
             self.git.push(
@@ -809,7 +933,7 @@ impl Driver {
             let last = n == RED_ATTEMPTS;
             eprintln!("[reqdrive] red: attempt {n}");
             let prompt = red_prompt(&self.wo, prev.as_deref());
-            let out = self.agent_call(&prompt)?;
+            let out = self.agent_call(&prompt, &format!("red-{n}"))?;
             let claims = out.final_result.as_ref().map(|f| read_claims(&f.text));
 
             // Checks 1 and 2, on the staged paths, before anything is committed.
@@ -994,7 +1118,7 @@ impl Driver {
             );
             // `agent_call` gates the interrupt, wall clock and turns before the call, and the
             // tokens after it.
-            let out = self.agent_call(&prompt)?;
+            let out = self.agent_call(&prompt, &format!("green-{n}"))?;
             let claim = out
                 .final_result
                 .as_ref()

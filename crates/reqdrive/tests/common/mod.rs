@@ -13,6 +13,7 @@ pub const REQDRIVE: &str = env!("CARGO_BIN_EXE_reqdrive");
 
 pub const BRANCH: &str = "attempt/S-1/a-1";
 pub const TESTS_REF: &str = "refs/heads/attempt/S-1/a-1.tests";
+pub const BRANCH_REF: &str = "refs/heads/attempt/S-1/a-1";
 
 /// Runs plain git (not the harness's wrapper) in `dir` and returns stdout. Panics on failure.
 pub fn git(dir: &Path, args: &[&str]) -> String {
@@ -179,6 +180,25 @@ impl Fixture {
             .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad line {l:?}: {e}")))
             .collect();
         (events, out.status.code().unwrap_or(-1))
+    }
+}
+
+/// The commit subjects on `sha` in the remote since the base, newest first.
+pub fn subjects(f: &Fixture, sha: &str) -> Vec<String> {
+    git(
+        &f.remote,
+        &["log", "--format=%s", &format!("{}..{sha}", f.base)],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect()
+}
+
+/// Whether the remote attempt branch carries a green (`feat:`) commit.
+pub fn has_feat_on_remote(f: &Fixture) -> bool {
+    match f.remote_ref(BRANCH_REF) {
+        Some(sha) => subjects(f, &sha).iter().any(|s| s.starts_with("feat:")),
+        None => false,
     }
 }
 
