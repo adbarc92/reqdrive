@@ -406,6 +406,8 @@ fn validate(
     Ok(Driver {
         limits: Arc::new(Limits::new(&wo.limits, start)),
         rules: PathRules::from_order(&wo),
+        expected_head: wo.base_commit.clone(),
+        checked_sha: None,
         wo,
         emitter: emitter.clone(),
         env: env.clone(),
@@ -444,6 +446,11 @@ struct Driver {
     test_command: String,
     agent: ClaudeCode,
     waiting: Arc<Mutex<Option<WaitingOn>>>,
+    /// Where HEAD must be: moved only by the harness's own commits and resets. Checked after
+    /// every agent call and test run and before every push.
+    expected_head: String,
+    /// The commit Check's test run passed on; Deliver pushes exactly this.
+    checked_sha: Option<String>,
     /// Agent calls made so far; Red's are 1..=2 and Green continues the numbering.
     call_index: u32,
     next_call_seq: u64,
@@ -491,13 +498,20 @@ impl Driver {
         {
             return;
         }
-        let head = match self.git.head() {
-            Ok(h) => h,
+        let head = self.expected_head.clone();
+        match self.git.head() {
+            Ok(h) if h == head => {}
+            Ok(h) => {
+                self.warn(format!(
+                    "evidence push skipped: HEAD is {h}, not the harness's {head}"
+                ));
+                return;
+            }
             Err(e) => {
                 self.warn(format!("evidence push skipped: cannot read HEAD: {e}"));
                 return;
             }
-        };
+        }
         if head == self.wo.base_commit {
             return;
         }
@@ -612,27 +626,27 @@ impl Driver {
         Ok(None)
     }
 
-    /// The shell makes every commit. An agent that ran git itself (it can under
-    /// bypassPermissions) has moved HEAD or left the attempt branch. Its commits and its
-    /// uncommitted changes are saved as `agent-moved-head-<label>.patch`, the attempt branch
-    /// is reset to `expected`, and the attempt ends `scope_violation`, so nothing it committed
-    /// can be pushed.
-    fn check_head(&self, expected: &str, label: &str) -> Step {
+    /// The shell makes every commit. Something that ran git itself (an agent under
+    /// bypassPermissions, or a test command) has moved HEAD away from `expected_head` or left
+    /// the attempt branch. Its commits and its uncommitted changes are saved as
+    /// `<patch_name>` in the state dir, the attempt branch is reset to `expected_head`, and the
+    /// attempt ends `scope_violation`, so nothing it committed can be pushed. `who` names it in
+    /// the detail ("the agent", "the test command").
+    fn check_head(&self, who: &str, patch_name: &str) -> Step {
+        let expected = self.expected_head.as_str();
         let head = self
             .git
             .head()
-            .map_err(|e| self.git_fail("cannot read HEAD after the agent call", e))?;
+            .map_err(|e| self.git_fail(&format!("cannot read HEAD after {who} ran"), e))?;
         let branch = self
             .git
             .current_branch()
-            .map_err(|e| self.git_fail("cannot read the branch after the agent call", e))?;
+            .map_err(|e| self.git_fail(&format!("cannot read the branch after {who} ran"), e))?;
         let on_branch = branch.as_deref() == Some(self.wo.attempt_branch.as_str());
         if head == expected && on_branch {
             return Ok(());
         }
-        let patch_path = self
-            .state_dir
-            .join(format!("agent-moved-head-{label}.patch"));
+        let patch_path = self.state_dir.join(patch_name);
         let committed = self
             .git
             .diff_patch(expected, &head)
@@ -645,8 +659,8 @@ impl Driver {
         let written = fs::write(
             &patch_path,
             format!(
-                "# commits the agent made: {expected}..{head}\n{committed}\n\
-                 # changes the agent left uncommitted\n{uncommitted}"
+                "# commits {who} made: {expected}..{head}\n{committed}\n\
+                 # changes {who} left uncommitted\n{uncommitted}"
             ),
         );
         self.git
@@ -659,8 +673,7 @@ impl Driver {
         }
         self.git
             .reset_to(expected)
-            .map_err(|e| self.git_fail("cannot undo the agent's commits", e))?;
-        written.map_err(|e| self.harness_error(format!("cannot write the patch file: {e}")))?;
+            .map_err(|e| self.git_fail(&format!("cannot undo the commits {who} made"), e))?;
         let left = if on_branch {
             String::new()
         } else {
@@ -670,24 +683,43 @@ impl Driver {
                 branch.as_deref().unwrap_or("a detached HEAD")
             )
         };
+        let saved = match written {
+            Ok(()) => format!("patch saved to {}", patch_path.display()),
+            Err(e) => format!(
+                "the patch could not be written to {}: {e}",
+                patch_path.display()
+            ),
+        };
         Err(self.end(
             Outcome::Failed,
             Category::ScopeViolation,
-            format!(
-                "the agent ran git: HEAD moved from {expected} to {head}{left}; patch saved to {}",
-                patch_path.display()
-            ),
+            format!("{who} ran git: HEAD moved from {expected} to {head}{left}; {saved}"),
         ))
+    }
+
+    /// Commits the index as the harness and makes the new commit the expected HEAD.
+    fn commit(&mut self, message: &str, what: &str) -> Step<String> {
+        let sha = self
+            .git
+            .commit(message)
+            .map_err(|e| self.git_fail(&format!("cannot commit {what}"), e))?;
+        self.expected_head = sha.clone();
+        Ok(sha)
+    }
+
+    /// Resets the attempt branch to the base and makes the base the expected HEAD.
+    fn reset_to_base(&mut self) -> Step {
+        self.git
+            .reset_to(&self.wo.base_commit)
+            .map_err(|e| self.git_fail("cannot reset to base", e))?;
+        self.expected_head = self.wo.base_commit.clone();
+        Ok(())
     }
 
     /// One agent call, with its exit mapped to a result and its turns and tokens counted.
     /// `label` (`red-<n>` or `green-<n>`) names the patch file if the agent ran git.
     fn agent_call(&mut self, prompt: &str, label: &str) -> Step<CallOutcome> {
         self.gate()?;
-        let expected = self
-            .git
-            .head()
-            .map_err(|e| self.git_fail("cannot read HEAD before the agent call", e))?;
         self.call_index += 1;
         let index = self.call_index;
         let max_turns = self.limits.turns_left();
@@ -707,7 +739,7 @@ impl Driver {
         };
         // Before the exit is judged, and even when the call could not be supervised, so a
         // limit or an error cannot leave the agent's commits.
-        self.check_head(&expected, label)?;
+        self.check_head("the agent", &format!("agent-moved-head-{label}.patch"))?;
         let out = called
             .map_err(|e| self.harness_error(format!("agent call {index} could not run: {e}")))?;
         self.next_call_seq = out.next_call_seq;
@@ -766,8 +798,9 @@ impl Driver {
         Ok(out)
     }
 
-    /// Runs the test command, announces its log, resets the tree, and maps a limit or an
-    /// interrupt. The caller judges the exit code.
+    /// Runs the test command, announces its log, checks the test command left HEAD where the
+    /// harness put it, resets the tree, and maps a limit or an interrupt. The caller judges
+    /// the exit code.
     fn run_tests(&self, label: &str) -> Step<TestRun> {
         self.gate()?;
         let log_path = self.state_dir.join(format!("test-{label}.log"));
@@ -782,16 +815,23 @@ impl Driver {
                 self.env.grace,
             )
         };
+        if let Ok(run) = &ran {
+            let lines: Vec<&str> = run.tail.lines().collect();
+            let last = lines[lines.len().saturating_sub(TEST_LOG_LINES)..].join("\n");
+            log(&self.emitter, LogStream::Test, last);
+            let _ = self.emitter.emit(Event::Artifact {
+                kind: ArtifactKind::LogFile,
+                reference: log_path.display().to_string(),
+                sha: None,
+            });
+        }
+        // `reset --hard HEAD` below would keep any commit the test command made.
+        self.check_head(
+            "the test command",
+            &format!("test-moved-head-{label}.patch"),
+        )?;
         let run =
             ran.map_err(|e| self.harness_error(format!("the test command could not run: {e}")))?;
-        let lines: Vec<&str> = run.tail.lines().collect();
-        let last = lines[lines.len().saturating_sub(TEST_LOG_LINES)..].join("\n");
-        log(&self.emitter, LogStream::Test, last);
-        let _ = self.emitter.emit(Event::Artifact {
-            kind: ArtifactKind::LogFile,
-            reference: log_path.display().to_string(),
-            sha: None,
-        });
         self.git
             .reset_clean()
             .map_err(|e| self.harness_error(format!("cannot reset after the tests: {e}")))?;
@@ -831,8 +871,14 @@ impl Driver {
 
     /// Pushes `sha` to `refname` within the remaining wall clock. A push ended by the deadline
     /// or an interrupt halts (R10); any other failure is `push_failed`.
-    /// Refuses, before any network call, a commit that [`Self::forbidden_in`] rejects.
-    fn push(&self, sha: &str, refname: &str, what: &str) -> Step {
+    /// Refuses, before any network call, a commit that [`Self::forbidden_in`] rejects, and
+    /// ends `scope_violation` if HEAD is not where the harness left it. `label` names the
+    /// patch file in that case.
+    fn push(&self, sha: &str, refname: &str, what: &str, label: &str) -> Step {
+        self.check_head(
+            "something other than the harness",
+            &format!("moved-head-before-{label}.patch"),
+        )?;
         let forbidden = self
             .forbidden_in(sha)
             .map_err(|e| self.git_fail("cannot list the files to push", e))?;
@@ -989,19 +1035,14 @@ impl Driver {
                 self.wo.story.id,
                 ids.join(", ")
             );
-            let red_sha = self
-                .git
-                .commit(&message)
-                .map_err(|e| self.git_fail("cannot commit the red change", e))?;
+            let red_sha = self.commit(&message, "the red change")?;
             let diff = self
                 .git
                 .diff_u0(&self.wo.base_commit, &red_sha)
                 .map_err(|e| self.git_fail("cannot diff the red commit", e))?;
             let missing = missing_ids(&added_lines(&diff), &ids);
             if !missing.is_empty() {
-                self.git
-                    .reset_to(&self.wo.base_commit)
-                    .map_err(|e| self.git_fail("cannot reset to base", e))?;
+                self.reset_to_base()?;
                 let why = format!(
                     "these criterion ids appear in no added test line: {}",
                     missing.join(", ")
@@ -1022,9 +1063,7 @@ impl Driver {
                     )))
                 }
                 Some(0) => {
-                    self.git
-                        .reset_to(&self.wo.base_commit)
-                        .map_err(|e| self.git_fail("cannot reset to base", e))?;
+                    self.reset_to_base()?;
                     let why = "the new tests pass at the red commit; they must fail until the story is implemented";
                     if last {
                         self.red_observed = Some(false);
@@ -1074,7 +1113,12 @@ impl Driver {
         let Some(red_sha) = self.red_sha.clone() else {
             return Err(self.harness_error("no red commit to publish"));
         };
-        self.push(&red_sha, &self.wo.tests_ref, "the tests ref")?;
+        self.push(
+            &red_sha,
+            &self.wo.tests_ref,
+            "the tests ref",
+            "red-published",
+        )?;
         let _ = self.emitter.emit(Event::Artifact {
             kind: ArtifactKind::TestsRef,
             reference: self.wo.tests_ref.clone(),
@@ -1171,9 +1215,7 @@ impl Driver {
             }
 
             let message = format!("feat: [{}] green {n}", self.wo.story.id);
-            self.git
-                .commit(&message)
-                .map_err(|e| self.git_fail("cannot commit the green change", e))?;
+            self.commit(&message, "the green change")?;
             eprintln!("[reqdrive] green: running the tests after call {n}");
             let run = self.run_tests(&format!("green-{n}"))?;
             match run.exit.code {
@@ -1219,8 +1261,11 @@ impl Driver {
 
     fn check(&mut self) -> Step {
         self.stage(Stage::Check, "running the tests at a clean HEAD")?;
-        // Green's passing run ended with `reset_clean`, so the tree is clean at HEAD.
+        // Green's passing run ended with `reset_clean`, so the tree is clean at HEAD, and
+        // `run_tests` checks HEAD is still this commit afterwards.
+        let checked = self.expected_head.clone();
         let run = self.run_tests("check")?;
+        self.checked_sha = Some(checked);
         self.evidence = Some(Evidence {
             test_command: self.test_command.clone(),
             exit_code: run.exit.code,
@@ -1250,12 +1295,17 @@ impl Driver {
 
     fn deliver(&mut self) -> Step<ResultEvent> {
         self.stage(Stage::Deliver, "pushing the attempt branch")?;
-        let head = self
-            .git
-            .head()
-            .map_err(|e| self.git_fail("cannot read HEAD", e))?;
+        // Exactly the commit Check's tests passed on.
+        let Some(head) = self.checked_sha.clone() else {
+            return Err(self.harness_error("no checked commit to deliver"));
+        };
         let branch = self.wo.attempt_branch.clone();
-        self.push(&head, &format!("refs/heads/{branch}"), "the attempt branch")?;
+        self.push(
+            &head,
+            &format!("refs/heads/{branch}"),
+            "the attempt branch",
+            "deliver",
+        )?;
         let _ = self.emitter.emit(Event::Artifact {
             kind: ArtifactKind::Branch,
             reference: branch.clone(),

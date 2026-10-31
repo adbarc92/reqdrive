@@ -366,3 +366,53 @@ fn closed_stdout_halts_the_run_and_keeps_the_logs() {
     assert_eq!(log.last().unwrap()["type"], "result");
     assert!(f.remote_ref(BRANCH_REF).is_none());
 }
+
+const SNEAKY: &str =
+    "git -c user.name=t -c user.email=t@x -c commit.gpgsign=false commit --allow-empty -qm sneaky";
+
+#[test]
+fn test_command_that_commits_is_scope_violation_and_nothing_is_pushed() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    order["test_command"] = json!(format!("\"{FAKE}\" check-tests test && {SNEAKY}"));
+    let (events, code) = f.run(&order, &script(vec![red_ok(), green_ok()]));
+    assert_eq!(code, 0);
+    let r = result(&events);
+    assert_eq!(r["outcome"], "failed", "{r}");
+    assert_eq!(category(&events), "scope_violation");
+    let detail = r["failure"]["detail"].as_str().unwrap();
+    assert!(detail.contains("the test command ran git"), "{detail}");
+    assert!(f.state_dir().join("test-moved-head-base.patch").exists());
+    assert_eq!(f.calls(), 0, "caught at the base, before any agent call");
+    assert!(f.remote_ref(BRANCH_REF).is_none());
+    assert!(f.remote_ref(TESTS_REF).is_none());
+    assert_eq!(
+        git(&f.ws, &["rev-parse", "HEAD"]),
+        f.base,
+        "reset to the base"
+    );
+}
+
+#[test]
+fn test_command_commit_after_green_is_never_pushed() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    // Commits only once green has written src/feature.txt, so red and the base run pass.
+    #[cfg(windows)]
+    let cmd = format!("\"{FAKE}\" check-tests test && if exist src\\feature.txt {SNEAKY}");
+    #[cfg(not(windows))]
+    let cmd =
+        format!("\"{FAKE}\" check-tests test && if [ -f src/feature.txt ]; then {SNEAKY}; fi");
+    order["test_command"] = json!(cmd);
+    let (events, code) = f.run(&order, &script(vec![red_ok(), green_ok()]));
+    assert_eq!(code, 0);
+    let r = result(&events);
+    assert_eq!(category(&events), "scope_violation", "{r}");
+    assert!(f.state_dir().join("test-moved-head-green-1.patch").exists());
+    if let Some(sha) = f.remote_ref(BRANCH_REF) {
+        let subjects = subjects(&f, &sha);
+        assert!(!subjects.iter().any(|s| s == "sneaky"), "{subjects:?}");
+    }
+    let head = git(&f.ws, &["log", "-1", "--format=%s"]);
+    assert_ne!(head, "sneaky");
+}
