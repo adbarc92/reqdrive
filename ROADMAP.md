@@ -55,7 +55,9 @@ The design is
 ## Open questions
 
 These are the owner's questions in spec section 8 that have no ruling yet. Q1 to Q3 are ruled
-(Rust, the CLI with JSON lines, the orchestrator opens PRs). Each has a recommendation in the spec.
+(Rust, the CLI with JSON lines, the orchestrator opens PRs), and Q13 is ruled (the single-call live
+check ran on 2026-10-31; a live end-to-end story still needs its own go-ahead, see Next). Each
+open one has a recommendation in the spec.
 
 - **Q4:** must the harness wait for the orchestrator to confirm red? Recommended: no.
 - **Q5:** where is the tests ref published and under what name? Recommended: the work order names
@@ -69,13 +71,15 @@ These are the owner's questions in spec section 8 that have no ruling yet. Q1 to
   second adapter? v1 refuses.
 - **Q10:** isolation, permissions and `--bare`: containers per attempt, and an API credential
   versus a subscription login. Without `--bare`, user hooks and plugins and the repository's own
-  `.claude/` hooks and `.mcp.json` servers load in every agent call.
+  `.claude/` hooks and `.mcp.json` servers load in every agent call. The live call on 2026-10-31
+  showed this: six user hooks ran inside a one-turn agent call (one errored), and a one-word reply
+  wrote 43k cache tokens. Recommended: `--bare` and an API credential for orchestrated runs, one
+  clone or container per attempt.
 - **Q11:** work-order additions (`state_dir`, `test_paths`, `frozen_paths`, `isolation`,
   `agent_allow`), who fills `frozen_paths`, and the preconditions (clean workspace, empty
   `state_dir`, one run per work order, test runs that leave no un-ignored byproducts).
 - **Q12:** is "the criterion id appears as a whole word in a test's name or a comment beside it" an
   acceptable mechanical check?
-- **Q13:** the live check spends a few cents. Go ahead? (See Next.)
 - **Q14:** is bypassing the target repository's own hooks (`--no-verify`, an empty hooks path)
   acceptable, given that the orchestrator runs its own checks?
 

@@ -8,15 +8,24 @@ session log below it is appended newest first.
 - **TL;DR:** the Rust story harness (`reqdrive story <work-order.json>`) is built and tested
   offline against a fake agent. The final whole-branch review is done, its findings are fixed,
   and a scoped re-review confirmed every fix. The Windows handle-inheritance issue is fixed. A
-  single live `claude` call confirmed the stream-json parser against real output.
-- **Branch:** on `main` (PR #7 merged). No open PRs for the harness.
+  single live `claude` call confirmed the stream-json parser against real output. `container`
+  isolation now needs a detected container.
+- **Branch:** the harness is on `main` (PR #7). PR #10 (the container check, the archive warning
+  and this status update) is open with CI green; it waits for the owner to merge it, because
+  agent-run merges need the owner's review.
 - **Readiness:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`
-  pass in CI on Ubuntu and Windows.
+  pass in CI on Ubuntu and Windows (155 tests on the PR #10 branch).
 - **Known gaps:** see [`ROADMAP.md`](../ROADMAP.md) (a live end-to-end story, thinking tokens,
-  deferred scope, open questions Q4 to Q14, planned improvements, known minor issues).
+  deferred scope, open questions Q4 to Q12 and Q14, planned improvements, known minor issues).
 - **Next steps:**
-  1. Run a live end-to-end story on a sandbox repository, with the owner's go-ahead (ROADMAP, Next).
-  2. Rule on the open questions Q4 to Q14 (ROADMAP, Open questions).
+  1. Merge PR #10 if it is still open.
+  2. Rule on Q10 (`--bare` and credentials; ROADMAP, Open questions has the live evidence and a
+     recommendation). The live end-to-end story depends on it.
+  3. Run a live end-to-end story on a sandbox repository, with the owner's go-ahead (ROADMAP, Next).
+  4. Rule on the remaining open questions (Q4 to Q9, Q11, Q12, Q14) in one pass; each has a
+     recommendation in spec section 8.
+  5. Small follow-ups: fill `thinking` from the CLI's new fields (parser and spec), Windows Job
+     Objects, a hermetic Check (ROADMAP, Next and Planned improvements).
 
 Design: [`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](superpowers/specs/2026-10-30-story-harness-mode-design.md).
 Plan: [`docs/superpowers/plans/2026-10-30-story-harness-rust.md`](superpowers/plans/2026-10-30-story-harness-rust.md).
@@ -32,6 +41,13 @@ Roadmap: [`ROADMAP.md`](../ROADMAP.md).
   `/proc/1/cgroup`), and logs the evidence when it does. It is always refused on Windows and macOS.
 - **State delta:** README isolation section and spec section 3.9 updated; stronger isolation proof
   added to the roadmap.
+- **Also:** `archive/README.md` warns that the archived Bash `launch` always runs the agent with
+  `--dangerously-skip-permissions` and that its installer no longer works; the archived code stays
+  frozen. ROADMAP marks Q13 ruled and adds the live-call evidence to Q10.
+- **Assumptions to revisit:** the owner's unrelated local change to the old Bash template
+  (`reviewCommand: "builtin"`) is in a local `git stash` in the main checkout, and also on the
+  remote branch `backup/2026-10-27/reqdrive/wip-main`; drop or restore it as wanted. PR #10's merge
+  was blocked by the agent's permission rules, so it is left for the owner.
 
 ### 2026-10-31: live check, merges
 
