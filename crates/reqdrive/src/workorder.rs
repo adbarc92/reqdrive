@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub const SCHEMA: &str = "story-work-order/0";
 
@@ -210,6 +211,62 @@ pub fn check_allow_rules(wo: &WorkOrder, test_command: &str) -> Result<(), Strin
         ));
     }
     Ok(())
+}
+
+/// What `/proc/1/cgroup` may mention inside a container.
+const CGROUP_WORDS: [&str; 5] = ["docker", "kubepods", "containerd", "libpod", "lxc"];
+
+/// Evidence that this process runs inside a container, looked for under `root` (`/` in
+/// production) and in `env`. Returns a short description of the first signal found: the file
+/// `/.dockerenv` or `/run/.containerenv`, a non-empty `container` variable, a container runtime
+/// named in `/proc/1/cgroup`, or a non-empty `KUBERNETES_SERVICE_HOST`.
+pub fn container_evidence(root: &Path, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let set = |name: &str| env(name).filter(|v| !v.is_empty());
+    if root.join(".dockerenv").exists() {
+        return Some("/.dockerenv".into());
+    }
+    if root.join("run").join(".containerenv").exists() {
+        return Some("/run/.containerenv".into());
+    }
+    if let Some(v) = set("container") {
+        return Some(format!("container={v}"));
+    }
+    if let Ok(text) = fs::read_to_string(root.join("proc").join("1").join("cgroup")) {
+        if let Some(word) = CGROUP_WORDS.iter().find(|w| text.contains(*w)) {
+            return Some(format!("/proc/1/cgroup mentions {word}"));
+        }
+    }
+    if set("KUBERNETES_SERVICE_HOST").is_some() {
+        return Some("KUBERNETES_SERVICE_HOST is set".into());
+    }
+    None
+}
+
+/// [`container_evidence`] for this process. There is no detection off Linux, so `None` there.
+pub fn detect_container() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        container_evidence(Path::new("/"), &|name| std::env::var(name).ok())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Why `isolation: "container"` is refused when [`detect_container`] finds nothing.
+pub fn no_container_detail() -> String {
+    let checked = if cfg!(target_os = "linux") {
+        "checked /.dockerenv, /run/.containerenv, $container, /proc/1/cgroup and \
+         $KUBERNETES_SERVICE_HOST"
+            .to_string()
+    } else {
+        format!(
+            "detection runs only on Linux, and this is {}",
+            std::env::consts::OS
+        )
+    };
+    format!(r#"isolation is "container" but no container was detected ({checked})"#)
 }
 
 fn truncate_on_boundary(s: &mut String, max: usize) {
@@ -495,6 +552,107 @@ mod tests {
         v["isolation"] = "container".into();
         v["agent_allow"] = serde_json::json!(["Bash(ls a,b)"]);
         check_allow_rules(&parsed(v), "pytest -k 'a,b'").expect("no --allowedTools in a container");
+    }
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    fn evidence_with_env(name: &'static str, value: &'static str) -> Option<String> {
+        let root = tempfile::tempdir().unwrap();
+        container_evidence(root.path(), &|k| (k == name).then(|| value.to_string()))
+    }
+
+    fn evidence_with_file(rel: &[&str], content: &str) -> Option<String> {
+        let root = tempfile::tempdir().unwrap();
+        let path = rel.iter().fold(root.path().to_path_buf(), |p, c| p.join(c));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+        container_evidence(root.path(), &no_env)
+    }
+
+    #[test]
+    fn container_evidence_none_on_a_bare_root() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(container_evidence(root.path(), &no_env), None);
+    }
+
+    #[test]
+    fn container_evidence_dockerenv() {
+        assert_eq!(
+            evidence_with_file(&[".dockerenv"], "").as_deref(),
+            Some("/.dockerenv")
+        );
+    }
+
+    #[test]
+    fn container_evidence_containerenv() {
+        assert_eq!(
+            evidence_with_file(&["run", ".containerenv"], "").as_deref(),
+            Some("/run/.containerenv")
+        );
+    }
+
+    #[test]
+    fn container_evidence_container_env_var() {
+        assert_eq!(
+            evidence_with_env("container", "podman").as_deref(),
+            Some("container=podman")
+        );
+        assert_eq!(evidence_with_env("container", ""), None);
+    }
+
+    #[test]
+    fn container_evidence_kubernetes_env_var() {
+        assert_eq!(
+            evidence_with_env("KUBERNETES_SERVICE_HOST", "10.0.0.1").as_deref(),
+            Some("KUBERNETES_SERVICE_HOST is set")
+        );
+        assert_eq!(evidence_with_env("KUBERNETES_SERVICE_HOST", ""), None);
+    }
+
+    #[test]
+    fn container_evidence_cgroup() {
+        for word in ["docker", "kubepods", "containerd", "libpod", "lxc"] {
+            let cgroup = format!("0::/system.slice/{word}-abc123.scope\n");
+            assert_eq!(
+                evidence_with_file(&["proc", "1", "cgroup"], &cgroup),
+                Some(format!("/proc/1/cgroup mentions {word}")),
+                "{word}"
+            );
+        }
+        assert_eq!(
+            evidence_with_file(&["proc", "1", "cgroup"], "0::/init.scope\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn container_refusal_names_what_was_checked() {
+        let detail = no_container_detail();
+        assert!(
+            detail.starts_with(r#"isolation is "container" but no container was detected"#),
+            "{detail}"
+        );
+        if cfg!(target_os = "linux") {
+            for signal in [
+                "/.dockerenv",
+                "/run/.containerenv",
+                "container",
+                "/proc/1/cgroup",
+                "KUBERNETES_SERVICE_HOST",
+            ] {
+                assert!(detail.contains(signal), "{detail} should name {signal}");
+            }
+        } else {
+            assert!(detail.contains("only on Linux"), "{detail}");
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn detect_container_is_none_off_linux() {
+        assert_eq!(detect_container(), None);
     }
 
     #[test]

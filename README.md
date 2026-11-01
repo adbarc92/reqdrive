@@ -163,6 +163,13 @@ or a test does. Isolating each attempt is the orchestrator's job:
 - The permission mode follows `isolation`. `container` means the orchestrator has isolated the
   attempt, and the agent runs with `--permission-mode bypassPermissions`. `none` (the default) runs
   the agent with `acceptEdits`, plus an allow-list of the test command and `agent_allow`.
+- **`container` is refused unless the harness detects a container.** The field is the work order's
+  claim, so before it touches the workspace the harness looks for evidence, on Linux only: the
+  file `/.dockerenv` (Docker) or `/run/.containerenv` (Podman), a non-empty `container`
+  environment variable (systemd-nspawn, Podman, LXC), `/proc/1/cgroup` naming `docker`,
+  `kubepods`, `containerd`, `libpod` or `lxc`, or a non-empty `KUBERNETES_SERVICE_HOST`. With none
+  of them the attempt ends as `work_order_invalid`; with one, a `log` event names it. On Windows
+  and macOS there is no detection, so `container` is always refused there. There is no override.
 - Every git call the harness makes disables repository hooks (`core.hooksPath` points at an empty
   directory), fsmonitor, external diff programs and automatic gc. That keeps the harness's own
   commits and pushes predictable. It does not make a hostile repository safe.
