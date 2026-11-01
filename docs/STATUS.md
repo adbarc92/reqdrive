@@ -7,23 +7,32 @@ session log below it is appended newest first.
 
 - **TL;DR:** the Rust story harness (`reqdrive story <work-order.json>`) is built and tested
   offline against a fake agent. The final whole-branch review is done, its findings are fixed,
-  and a scoped re-review confirmed every fix. The Windows handle-inheritance issue is fixed.
-  The live check against the real `claude` CLI has not run: it waits for the owner's go-ahead.
-- **Branch:** `feat/story-harness-rust`, not merged. PR #7, stacked on the spec PR #6.
-- **Readiness:** the three checks (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test`) pass on Windows. The first CI run on Linux has not happened, so the Unix-only code
-  and tests are not yet compiled there; that run is the merge gate.
-- **Known gaps:** see [`ROADMAP.md`](../ROADMAP.md) (deferred scope, open questions Q4 to Q14,
-  planned improvements, known minor issues).
+  and a scoped re-review confirmed every fix. The Windows handle-inheritance issue is fixed. A
+  single live `claude` call confirmed the stream-json parser against real output.
+- **Branch:** `feat/story-harness-rust`, PR #7 against `main` (the spec PR #6 is merged).
+- **Readiness:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`
+  pass in CI on Ubuntu and Windows.
+- **Known gaps:** see [`ROADMAP.md`](../ROADMAP.md) (a live end-to-end story, thinking tokens,
+  deferred scope, open questions Q4 to Q14, planned improvements, known minor issues).
 - **Next steps:**
-  1. Confirm CI on PR #7 is green on Linux and Windows; merge #6, then #7.
-  2. Run the live check once the owner gives the go-ahead (ROADMAP, Next).
+  1. Merge PR #7 once CI is green.
+  2. Run a live end-to-end story on a sandbox repository, with the owner's go-ahead (ROADMAP, Next).
 
 Design: [`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](superpowers/specs/2026-10-30-story-harness-mode-design.md).
 Plan: [`docs/superpowers/plans/2026-10-30-story-harness-rust.md`](superpowers/plans/2026-10-30-story-harness-rust.md).
 Roadmap: [`ROADMAP.md`](../ROADMAP.md).
 
 ## Session log
+
+### 2026-10-31: live check, merges
+
+- **Live check:** one real Haiku call (`claude` 2.1.296). The parser's field paths matched; the
+  scrubbed output is the fixture for `live_fixture_parses`. The CLI's side calls show up as a
+  `modelUsage` residue for the same model. New finding: the CLI now reports thinking tokens
+  (ROADMAP, Next).
+- **Merged:** PR #6 (the spec and plan) and PR #8 (the factory plans no longer name a private
+  repository or local paths; earlier history still has the old text).
+- **State delta:** PR #7 targets `main`; the only open item before merge is its CI run.
 
 ### 2026-10-31: Windows handle inheritance
 

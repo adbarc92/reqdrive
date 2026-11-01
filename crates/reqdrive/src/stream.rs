@@ -257,6 +257,39 @@ mod tests {
         assert_eq!(sum.next_call_seq, 3);
     }
 
+    /// Captured from `claude` 2.1.296 on 2026-10-31 (`-p --output-format stream-json --verbose
+    /// --include-partial-messages --model haiku --max-turns 1`), with local paths and hook
+    /// output removed. Field paths are as the CLI writes them.
+    const LIVE: &str = include_str!("../tests/fixtures/stream-live.jsonl");
+
+    #[test]
+    fn live_fixture_parses() {
+        let (rows, sum) = run(LIVE);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.call_seq, Some(1));
+        assert_eq!(r.model_id.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(r.prompt, Some(2 + 43_225));
+        assert_eq!(r.cached_prompt, Some(0));
+        assert_eq!(r.cache_write, Some(43_225));
+        assert_eq!(r.output, Some(4));
+        assert!(sum.flushed.is_empty());
+        let fr = sum.final_result.as_ref().unwrap();
+        assert_eq!(fr.subtype, "success");
+        assert_eq!(fr.num_turns, Some(1));
+        assert_eq!(fr.text, "ok");
+        // modelUsage counts more than the streamed call (the CLI's own side calls), so the
+        // difference is a residue row for the same model.
+        assert_eq!(sum.residue.len(), 1);
+        let res = &sum.residue[0];
+        assert_eq!(res.model_id.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(res.prompt, Some(1_175 - 2));
+        assert_eq!(res.output, Some(19 - 4));
+        assert_eq!(res.cached_prompt, Some(0));
+        assert_eq!(res.cache_write, Some(0));
+        assert!(!res.attributed);
+    }
+
     #[test]
     fn residue_for_unattributed_model() {
         let (_, sum) = run(BASIC);

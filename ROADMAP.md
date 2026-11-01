@@ -10,18 +10,15 @@ The design is
 
 ## Next
 
-- **The live check.** Pending the owner's go-ahead (Q13), because it spends a few cents. Create a
-  temporary directory with `git init`, then make one real call:
-  `claude -p --output-format stream-json --verbose --include-partial-messages --model haiku --max-turns 1 "Reply with the word ok."`
-  Save stdout as `crates/reqdrive/tests/fixtures/stream-live.jsonl`. Add a unit test
-  `live_fixture_parses`: at least one usage row with a known `prompt`, and a `final_result` with
-  `num_turns`. If the field paths differ from what the parser assumes, fix the parser test-first and
-  record the correction in spec section 10. Then run one story on a sandbox repository and confirm
-  that two attempts in parallel give two branches, two tests refs, and a usage ledger that
-  reconciles with `modelUsage`.
-- **Linux CI.** The code has been run on Windows. The first Linux run on the pinned toolchain has
-  not happened yet, so the Unix-only process-group code and the Unix-only tests (signals, a
-  signal-killed red run) have not been compiled or run.
+- **A live end-to-end story.** The single-call live check is done (2026-10-31, `claude` 2.1.296):
+  the parser's field paths matched, and `live_fixture_parses` runs on the captured, scrubbed
+  output (`crates/reqdrive/tests/fixtures/stream-live.jsonl`). `--max-turns` is accepted though
+  `claude --help` does not list it. Still to do, with the owner's go-ahead since it spends more:
+  run one story on a sandbox repository and confirm that two attempts in parallel give two
+  branches, two tests refs, and a usage ledger that reconciles with `modelUsage`.
+- **Thinking tokens.** The live output now reports `output_tokens_details.thinking_tokens` on
+  `message_delta` and `thinkingTokens` in `modelUsage`. The spec says `thinking` is always `null`
+  in v1; filling it from these fields is a small change to the parser and the spec.
 
 ## Deferred from v1 (spec section 10.5)
 
