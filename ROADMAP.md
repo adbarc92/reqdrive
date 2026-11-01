@@ -1,203 +1,119 @@
-> **Superseded — see the Roadmap section of [CLAUDE.md](./CLAUDE.md).**
-> This is the v0.2.0 simplification plan; its unchecked boxes describe work that shipped. Retained as history.
+# Roadmap
 
-# reqdrive Simplification Roadmap
+This is the only roadmap file. Every future intention lives here: planned work, deferred scope,
+follow-ups, known defects not yet scheduled, and open questions. The "next steps" in
+[`docs/STATUS.md`](docs/STATUS.md) are a short list that points into this file.
 
-## Vision
+The design is
+[`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](docs/superpowers/specs/2026-10-30-story-harness-mode-design.md)
+(section numbers below refer to it).
 
-Transform reqdrive from an over-engineered enterprise system (23 scripts, 2000+ lines) into a lean, reusable workflow built on the proven Ralph pattern (85 lines).
+## Next
 
-## Current State
+- **A live end-to-end story.** The single-call live check is done (2026-10-31, `claude` 2.1.296):
+  the parser's field paths matched, and `live_fixture_parses` runs on the captured, scrubbed
+  output (`crates/reqdrive/tests/fixtures/stream-live.jsonl`). `--max-turns` is accepted though
+  `claude --help` does not list it. Still to do, with the owner's go-ahead since it spends more:
+  run one story on a sandbox repository and confirm that two attempts in parallel give two
+  branches, two tests refs, and a usage ledger that reconciles with `modelUsage`.
+- **Thinking tokens.** The live output now reports `output_tokens_details.thinking_tokens` on
+  `message_delta` and `thinkingTokens` in `modelUsage`. The spec says `thinking` is always `null`
+  in v1; filling it from these fields is a small change to the parser and the spec.
 
-```
-reqdrive/
-├── bin/reqdrive                    # CLI entry point
-├── lib/
-│   ├── agent-run.sh               # Loop-based agent (redundant)
-│   ├── agent-tasks.sh             # Tasks-based agent (keep concept)
-│   ├── check-deps.sh              # Dependency checking
-│   ├── clean.sh                   # Worktree cleanup
-│   ├── config.sh                  # 50+ env vars (over-complex)
-│   ├── deps.sh                    # Dependency graph
-│   ├── errors.sh                  # 12 error codes (unnecessary)
-│   ├── find-next-reqs.sh          # Find available reqs
-│   ├── init.sh                    # Interactive setup
-│   ├── orchestrate.sh             # Parallel orchestration
-│   ├── prd-gen.sh                 # Separate PRD generation
-│   ├── pr-create.sh               # PR creation (keep)
-│   ├── run-single-req.sh          # 5-stage pipeline (over-complex)
-│   ├── status.sh                  # Status reporting
-│   ├── validate.sh                # Manifest validation
-│   ├── verify.sh                  # Separate verification
-│   └── worktree.sh                # Git worktree management
-├── templates/
-│   ├── prompt.md.tpl              # Agent prompt
-│   ├── prompt-tasks.md.tpl        # Tasks-based prompt
-│   └── reqdrive.json.tpl          # Full manifest template
-├── skills/                        # Claude Code skills
-└── tests/                         # Test suite
-```
+## Deferred from v1 (spec section 10.5)
 
-**Problems:**
-- 5-stage pipeline when 2 stages suffice (run agent → create PR)
-- Two agent implementations (loop vs tasks)
-- Separate PRD generation, verification phases
-- Complex error codes never used for recovery
-- Git worktrees add complexity for rare parallelization needs
-- 50+ environment variables
+- PR routes: the `pr` work-order field and the GitHub and Forgejo AGit delivery routes (Q3). In v1
+  the orchestrator opens PRs.
+- A second agent adapter, which is what a local-only inference policy needs (section 2.2). Until
+  then such a policy is refused with `policy_unsatisfiable`.
+- The `harness-protocol` transport (Q2). v1 is the CLI with JSON lines.
+- Docker workspaces. Isolation stays the orchestrator's job (section 3.9).
+- A hash lock over contract tests, as the factory plans have it (spec section 10.4).
+- The factory plans' crates and gates (spec section 10.5; see also "Not the current path" below).
 
-## Target State
+## Planned improvements
 
-```
-reqdrive/
-├── bin/reqdrive                    # CLI entry point (simplified)
-├── lib/
-│   ├── config.sh                  # Minimal config (~50 lines)
-│   ├── run.sh                     # Core Ralph loop + PR creation
-│   └── pr-create.sh               # PR creation (kept as-is)
-├── templates/
-│   ├── prompt.md                  # Single agent prompt
-│   └── reqdrive.json.example      # Minimal example config
-├── skills/                        # Keep for reference
-└── tests/                         # Update for new structure
-```
+- **Windows Job Objects.** On Windows only the direct child can be killed, so grandchildren (for
+  example `npm` under `cmd`) can survive an interrupt, and `REQDRIVE_CLAUDE_BIN` must name a real
+  `.exe`. A Job Object would stop the whole tree.
+- **Windows object-store race.** Concurrent attempts in one repository that produce byte-identical
+  objects can fail transiently with "Permission denied" while committing or pushing. Consider one
+  bounded retry on that stderr pattern. Distinct content, or separate clones, avoids it.
+- **Windows missing runner.** On Windows `cmd` reports a missing command as exit 1, so a missing
+  test runner shows up as `base_broken` at provision rather than `harness_error`.
+- **Hermetic Check.** Check runs after `reset --hard` and `clean -fd`, which keep ignored files, so
+  ignored build output or dependencies can make it pass. Freezing or removing ignored files before
+  Check would make it hermetic. Until then the orchestrator runs its own tests.
+- **A second Ctrl-C to force exit.** Today every interrupt waits for the current child's grace.
+- **An abandoned stdout reader** (the agent exited but a leftover process holds its pipe) stays
+  blocked on its thread until that process closes the pipe or the harness exits.
 
-**4 scripts instead of 17.**
+## Open questions
 
-## What Changes
+These are the owner's questions in spec section 8 that have no ruling yet. Q1 to Q3 are ruled
+(Rust, the CLI with JSON lines, the orchestrator opens PRs). Each has a recommendation in the spec.
 
-### Delete (move to `archive/`)
-| File | Reason |
-|------|--------|
-| `lib/agent-run.sh` | Redundant with Ralph loop |
-| `lib/agent-tasks.sh` | Merged into run.sh |
-| `lib/errors.sh` | Over-engineered; use simple exit codes |
-| `lib/verify.sh` | Agent handles its own verification |
-| `lib/prd-gen.sh` | Optional; inline into prompt |
-| `lib/worktree.sh` | Sequential execution is fine for v1 |
-| `lib/orchestrate.sh` | No parallelization in v1 |
-| `lib/run-single-req.sh` | Replaced by simpler run.sh |
-| `lib/check-deps.sh` | Defer to v2 |
-| `lib/find-next-reqs.sh` | Defer to v2 |
-| `lib/deps.sh` | Defer to v2 |
-| `lib/status.sh` | Simplified status in run.sh |
-| `lib/clean.sh` | No worktrees to clean |
-| `templates/prompt-tasks.md.tpl` | Merged into prompt.md |
-| `templates/reqdrive.json.tpl` | Replace with minimal example |
+- **Q4:** must the harness wait for the orchestrator to confirm red? Recommended: no.
+- **Q5:** where is the tests ref published and under what name? Recommended: the work order names
+  it in full and it goes to the same remote as the branch.
+- **Q6:** is the reading of `tests_defective` right (the agent concluded a frozen test contradicts
+  its criterion)?
+- **Q7:** which outcome values? v1 has `pushed`, `no_change`, `failed`, `halted`.
+- **Q8:** usage details: residue rows, a `cache_write` field, `thinking: null`, and which counts
+  `limits.tokens` covers (uncached input, cache writes and output; cache reads excluded).
+- **Q9:** a local-only inference policy: refuse it, try an unsupported local server, or wait for a
+  second adapter? v1 refuses.
+- **Q10:** isolation, permissions and `--bare`: containers per attempt, and an API credential
+  versus a subscription login. Without `--bare`, user hooks and plugins and the repository's own
+  `.claude/` hooks and `.mcp.json` servers load in every agent call.
+- **Q11:** work-order additions (`state_dir`, `test_paths`, `frozen_paths`, `isolation`,
+  `agent_allow`), who fills `frozen_paths`, and the preconditions (clean workspace, empty
+  `state_dir`, one run per work order, test runs that leave no un-ignored byproducts).
+- **Q12:** is "the criterion id appears as a whole word in a test's name or a comment beside it" an
+  acceptable mechanical check?
+- **Q13:** the live check spends a few cents. Go ahead? (See Next.)
+- **Q14:** is bypassing the target repository's own hooks (`--no-verify`, an empty hooks path)
+  acceptable, given that the orchestrator runs its own checks?
 
-### Keep (as-is or minimal changes)
-| File | Changes |
-|------|---------|
-| `bin/reqdrive` | Simplify command dispatch |
-| `lib/config.sh` | Reduce to ~50 lines |
-| `lib/pr-create.sh` | Keep; it's well-designed |
-| `lib/init.sh` | Simplify for minimal config |
-| `lib/validate.sh` | Simplify validation |
-| `skills/` | Keep as prompt references |
-| `tests/` | Update for new structure |
+## Not the current path
 
-### Create
-| File | Purpose |
-|------|---------|
-| `lib/run.sh` | Core Ralph loop with integrated PR |
-| `templates/prompt.md` | Unified agent prompt |
-| `templates/reqdrive.json.example` | Minimal config example |
-| `archive/` | Store removed files for reference |
+- The factory M0 and M1 plans (`docs/superpowers/plans/2026-10-04-factory-m0-foundations.md` and
+  `…-m1-harness.md`) are not the current path. The owner ruled (Q1) that the story harness is built
+  standalone in Rust and does not execute them. They stay in the repository for reference.
+- `docs/superpowers/plans/2026-07-23-reqdrive-roadmap-completion.md` is about the archived Bash
+  tree.
 
-## New Manifest Format
+## Known minor issues
 
-**Before (30+ fields):**
-```json
-{
-  "project": { "name": "...", "title": "..." },
-  "paths": { "requirementsDir": "...", "agentDir": "...", "appDir": "...", "contextFile": "..." },
-  "requirements": { "pattern": "...", "idRegex": "...", "dependencies": {} },
-  "commands": { "install": "...", "test": "...", "typecheck": "...", "lint": "..." },
-  "agent": { "model": "...", "maxIterations": 10, "branchPrefix": "...", "completionSignal": "..." },
-  "verification": { "maxRetries": 3, "checks": [], "generateTests": true },
-  "pr": { "labels": [], "reqLabel": true, "setupSteps": [], "regressionChecks": [] },
-  "orchestration": { "maxParallel": 3, "baseBranch": "main", "stateDir": "..." },
-  "security": { "mode": "interactive", "allowedTools": [] }
-}
-```
+Found in review and deliberately left for later. None blocks v1.
 
-**After (6 fields):**
-```json
-{
-  "requirementsDir": "docs/requirements",
-  "testCommand": "npm test",
-  "model": "claude-opus-4-5-20251101",
-  "maxIterations": 10,
-  "baseBranch": "main",
-  "prLabels": ["agent-generated"]
-}
-```
-
-## New Pipeline
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  reqdrive run REQ-01                                            │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Load config (6 fields)                                      │
-│  2. Find requirement file (REQ-01*.md)                          │
-│  3. Create branch: reqdrive/req-01                              │
-│  4. Build prompt (embed requirement + PRD instructions)         │
-│  5. Loop until COMPLETE or max iterations:                      │
-│     │  cat prompt.md | claude --dangerously-skip-permissions    │
-│     │  Check for <promise>COMPLETE</promise>                    │
-│  6. Create PR with gh                                           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**One script. One loop. One PR.**
-
-## Implementation Steps
-
-### Phase 1: Archive & Restructure
-- [x] Create `archive/v1-complex/` directory
-- [x] Move deleted files to archive (13 scripts)
-- [x] Update .gitignore if needed
-
-### Phase 2: Implement Simplified Core
-- [x] Create `lib/run.sh` (Ralph loop + PR)
-- [x] Simplify `lib/config.sh`
-- [x] Prompt embedded in run.sh (no separate template needed)
-- [x] Create `templates/reqdrive.json.example`
-
-### Phase 3: Update CLI
-- [x] Simplify `bin/reqdrive` command dispatch
-- [x] Update `lib/init.sh` for minimal config
-- [x] Simplify `lib/validate.sh`
-
-### Phase 4: Documentation & Tests
-- [ ] Update README/docs
-- [ ] Update tests for new structure
-- [ ] Add migration notes for existing users
-
-## Results
-
-| Metric | Before | After | Reduction |
-|--------|--------|-------|-----------|
-| lib/ scripts | 17 | 5 | 71% |
-| lib/ lines | 1770 | 587 | 67% |
-| Config fields | 30+ | 7 | 77% |
-| Pipeline stages | 5 | 2 | 60% |
-
-## Future Enhancements (v2)
-
-These features are intentionally deferred:
-
-1. **Parallelization** - Add `--parallel` flag with worktrees
-2. **Dependency ordering** - Re-add deps.sh for multi-req runs
-3. **PRD generation** - Add `--generate-prd` flag
-4. **Resume capability** - Add checkpointing back if needed
-5. **Security modes** - Add `--interactive` flag for non-dangerous mode
-
-## Success Criteria
-
-- [ ] `reqdrive run REQ-01` works end-to-end
-- [ ] Total lib/ code under 300 lines
-- [ ] Config has 6 or fewer fields
-- [ ] Single Claude invocation loop (no separate PRD/verify calls)
-- [ ] PR creation works as before
+- CI installs the pinned toolchain with `rustup show`, which relies on rustup's implicit install.
+- The crate version (0.4.0) and licence (MIT) were chosen during the build and should be confirmed.
+- `cap_evidence`'s test does not cover a 3-byte character at the cut. Serialization of `Evidence`
+  and `Failure` is not asserted. A `starts_with` path check in work-order validation is case-sensitive on
+  Windows.
+- The criterion check skips self-overlapping ids. `Emitter::finish` closes before it writes, so a
+  failed write cannot be retried. The envelope-override test cannot exercise a real override.
+- `added_lines` can drop a `++` line that follows a removed `-- ` line. Path normalisation does not
+  collapse `//` or `..`, and does no non-ASCII folding, alternate-data-stream or 8.3 handling.
+- The stream parser adds with plain `u64 +` on untrusted JSON (use `saturating_add`), and has no
+  direct tests for a delta without an open call or for a non-object line.
+- A backtick in a story title can open inline code in a prompt (cosmetic). The `curl | sh` pattern
+  gives a false positive on `sha256sum`.
+- `fake-claude` writes JSON keys in alphabetical order. The grandchild test needs a reaping init.
+  A test-log tail can exceed 2 048 bytes when invalid bytes expand to U+FFFD. A `try_wait` error
+  leaves the child running.
+- Patches and paths are decoded lossily as UTF-8. `is_work_tree` cannot tell "no git" from "not a repository". Two push tests assert
+  less than their names say.
+- No tests for an agent spawn error, a flushed open call, a token or deadline kill through the
+  adapter, a panicking stdout reader, or the panic path's `progress{done}`.
+- A push failure is classified by its stderr prefix. Untested paths: the `reqdrive.json` fallback, the red-violations retry, the
+  empty-change retry, exit 126 and 127 at Red, the criteria-map artifact, the dangerous-pattern
+  logs and the heartbeat.
+- The wall-clock test depends on timing (it allows 15 s for a 5 s budget).
+- When `modelUsage` omits a cache total, the residue row's `prompt` is `null`, so `limits.tokens`
+  adds 0 for that row's input. On a panic the heartbeat thread is not joined, so a heartbeat can
+  follow `progress{done}`. A git failure during an interrupt (mapped to `halted/interrupted`) has no
+  test.
+- `git::tests::push_to_bare_remote_without_upstream` failed once on Windows and was not reproduced
+  in eight further runs under load.

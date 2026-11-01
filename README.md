@@ -1,254 +1,216 @@
 # reqdrive
 
-Requirements-driven development pipeline. Automates the flow from requirements documents to pull requests using AI agents.
+`reqdrive story <work-order.json>` is a coding harness that an external orchestrator drives. It
+takes one story with acceptance criteria and runs it to one pushed branch. The agent works in two
+stages. In Red, an agent writes tests only, and the harness checks that every criterion id appears
+in them and that they fail. In Green, an agent makes them pass without touching the tests. The
+harness, not the agent, makes every commit, runs the test command, checks the scope rules and
+pushes. It writes events to stdout as JSON lines, and the last line is the result. It does not open
+pull requests and it does not merge: the orchestrator does both.
 
-## Version 0.3.0
+The design is in
+[`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](docs/superpowers/specs/2026-10-30-story-harness-mode-design.md).
+The earlier Bash implementation is kept unchanged in `archive/bash-v0.3/`.
 
-Uses a two-phase architecture: planning (PRD generation) followed by deterministic story-by-story implementation.
+## Build
 
-## How It Works
+The toolchain is pinned to Rust 1.93.1 in `rust-toolchain.toml`, and `rustup` installs it on first
+use.
 
-1. You write requirements as markdown files (`REQ-01-feature-name.md`)
-2. Run `reqdrive run REQ-01`
-3. The agent creates a PRD with user stories, implements each story, and commits
-4. A PR is created with a validation checklist
-
-## Prerequisites
-
-- `bash` (4.0+)
-- `jq`
-- `git`
-- `gh` (GitHub CLI, authenticated)
-- `claude` (Claude Code CLI — only needed for `run`/`launch` commands)
-- `timeout` and `sha256sum` (GNU coreutils — present by default on Linux, macOS via `brew install coreutils`, and in Git-Bash/MSYS2)
-
-**Windows Users:** reqdrive requires a Bash environment. Use Git Bash or WSL2.
-
-## Installation
-
-```bash
-git clone https://github.com/adbarc92/reqdrive.git ~/.reqdrive
-echo 'export PATH="$HOME/.reqdrive/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+```
+cargo build --release
 ```
 
-## Quick Start
+This produces `reqdrive`. The package also builds `fake-claude`, a **test-only** stand-in for the
+`claude` CLI that the integration tests use. `cargo install` installs it beside `reqdrive`, but it
+has no use outside the tests.
 
-```bash
-cd your-project
-reqdrive init         # Interactive setup — creates reqdrive.json
-reqdrive validate     # Verify configuration
-reqdrive run REQ-01   # Run pipeline for a requirement
+## Run
+
+```
+reqdrive story <work-order.json>
+reqdrive --version
 ```
 
-## Commands
+- **stdout:** events, one JSON object per line. The last line is the result.
+- **stderr:** human-readable diagnostics.
+- **Exit code:** `0` once a result line has been written, whatever the outcome. `1` if the result
+  could not be written to stdout. `2` for a usage error. To learn what happened, read the result
+  line, not the exit code.
+- **If stdout closes** (the orchestrator stops reading), the run stops at its next check with a
+  `halted`/`interrupted` result. It is still written to `<state_dir>/result.json` and
+  `events.jsonl`, and the process exits 1.
 
-| Command | Description |
-|---------|-------------|
-| `reqdrive init` | Create `reqdrive.json` configuration and directories |
-| `reqdrive run <REQ-ID>` | Run the pipeline for a specific requirement |
-| `reqdrive launch <REQ-ID>` | Run pipeline detached in background (`--unsafe` mode) |
-| `reqdrive status [REQ-ID]` | Show run status and story completion |
-| `reqdrive logs <REQ-ID>` | Tail output log for a background run |
-| `reqdrive validate` | Validate the configuration file |
-| `reqdrive migrate` | Add version fields to pre-0.3.0 configs/PRDs |
-| `reqdrive plan <REQ-ID>` | Generate `prd.json` only — planning phase without implementation. Useful for reviewing the plan before committing agent time. |
-| `reqdrive verify <REQ-ID>` | Re-run verification for an existing run and update its `verification-summary.json` in place. Exits 0 on pass, 9 on failure, 3 if the run or its summary is missing, 4 on branch mismatch, 10 while the run is still active. |
-| `reqdrive orchestrate` | Multi-requirement sequencing. **Not implemented** — prints a "coming soon" notice and exits 0. |
-| `reqdrive --version` | Show version |
-| `reqdrive --help` | Show help |
+The agent is the `claude` CLI in print mode. It must be installed and logged in. The harness has
+so far been tested only against `fake-claude`: the check against the real CLI's stream output
+has not run yet (see [`ROADMAP.md`](ROADMAP.md), Next).
 
-### Run Options
+### Work order
 
-| Flag | Description |
-|------|-------------|
-| `-i`, `--interactive` | Run in interactive mode (default, safer) |
-| `--unsafe` | Skip permission prompts (`--dangerously-skip-permissions`) |
-| `--dangerously-skip-permissions` | Alias for `--unsafe`. Accepted for parity with the `claude` CLI's own flag name. Grants the agent unrestricted system access; `launch` always uses this mode because a detached run cannot answer permission prompts. |
-| `--force` | Skip pre-flight checks |
-| `--resume` | Resume from last checkpoint |
-| `--ref <branch>` | `reqdrive verify` only. Verify against `<branch>` instead of refusing when the checkout does not match the run's recorded branch. Without it, verifying after the branch was merged and deleted would record an unrelated tree's result as that run's evidence. |
-
-## Configuration (`reqdrive.json`)
+A work order is one JSON file. The `schema` value must be exactly `story-work-order/0`.
 
 ```json
 {
-  "version": "0.3.0",
-  "requirementsDir": "docs/requirements",
-  "testCommand": "npm test",
-  "model": "claude-sonnet-4-20250514",
-  "maxIterations": 10,
-  "baseBranch": "main",
-  "prLabels": ["agent-generated"],
-  "projectName": "My Project",
-  "completionHook": ""
+  "schema": "story-work-order/0",
+  "attempt_id": "a-7f3c",
+  "story": {
+    "id": "S-12",
+    "title": "Short title",
+    "description": "What the story asks for.",
+    "acceptance_criteria": [
+      {"id": "AC-1", "text": "First criterion."},
+      {"id": "AC-2", "text": "Second criterion."}
+    ]
+  },
+  "workspace": "/abs/path/to/clone",
+  "state_dir": "/abs/path/outside/the/clone",
+  "repo": {"remote": "origin", "url": "..."},
+  "base_commit": "<40 lowercase hex characters>",
+  "base_branch": "main",
+  "attempt_branch": "attempt/S-12/a-7f3c",
+  "tests_ref": "refs/heads/attempt/S-12/a-7f3c.tests",
+  "failure_evidence": [{"attempt_id": "a-11aa", "summary": "...", "detail": "..."}],
+  "inference": {"allow": [{"provider": "anthropic", "models": ["claude-sonnet-5-5"]}]},
+  "limits": {"turns": 200, "wall_clock_secs": 3600, "tokens": 4000000},
+  "test_command": "npm test",
+  "test_paths": ["test/"],
+  "frozen_paths": ["package.json", "jest.config.js"],
+  "isolation": "container",
+  "agent_allow": ["Bash(npm run typecheck)"]
 }
 ```
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `version` | `"0.3.0"` | Schema version |
-| `requirementsDir` | `docs/requirements` | Directory containing `REQ-*.md` files |
-| `testCommand` | (none) | Command to run tests |
-| `model` | `claude-sonnet-4-20250514` | Claude model to use |
-| `maxIterations` | `10` | Maximum agent iterations |
-| `baseBranch` | `main` | Base branch for feature branches |
-| `prLabels` | `["agent-generated"]` | Labels to add to PRs |
-| `projectName` | (none) | Project name for PR titles |
-| `completionHook` | (none) | Shell command executed when pipeline completes |
-| `maxStoryRetries` | `3` | Maximum attempts per user story. `select_next_story` skips a story once its `attempts` counter reaches this value, so a story that cannot be implemented does not consume the whole iteration budget |
-| `reviewCommand` | (none) | Post-PR review step. `"builtin"` runs a Claude review of the diff; any other non-empty string is executed as a shell command. Findings are appended to the PR body. Warn-only — it never aborts the pipeline, and it runs after PR creation, so it cannot change the draft decision |
-| `policy` | `{}` | Evidence policy. `policy.riskTiers` maps tier names (`high`, `medium`, `low`) to arrays of path prefixes; `policy.scopeCheck` is `"warn"` (default) or `"block"` |
+Notes:
 
-## Project Layout
+- `state_dir` must be absolute, empty, writable and outside `workspace`. Each work order runs once.
+  A retry is a new attempt with a new id, branch, tests ref and state directory.
+- `workspace` must be a git work tree at `base_commit` with a clean tree, untracked files included.
+- `test_command` is required. If it is missing, the harness reads `testCommand` from
+  `<workspace>/reqdrive.json`. With `isolation: none`, neither it nor an `agent_allow` rule may
+  contain a comma, because they are joined with commas into one `--allowedTools` value; wrap such
+  a command in a script.
+- The test command must not run git. If HEAD has moved after a test run, the harness saves the
+  change as `test-moved-head-<label>.patch`, resets, and ends `scope_violation`.
+- `attempt_branch` is a branch name without `refs/`. `tests_ref` starts with `refs/` and may not
+  equal, contain or sit under `refs/heads/<attempt_branch>`.
+- `limits.wall_clock_secs` is 1 to 604 800 (7 days). Only agent calls spend `limits.turns`.
+- `green_max_calls` (1 to 20, default 5) and `denied_paths` are optional. `denied_paths` adds to
+  the built-in list: `.github`, `.forgejo`, `.gitea`, `.gitlab-ci.yml`, `.husky`, `.claude`,
+  `.mcp.json` and `.gitmodules`.
+- `isolation` is `container` or `none` (the default). It sets the agent's permission mode; see
+  Isolation below.
+- `repo.url` and `base_branch` are accepted and unused in v1. Unknown fields are ignored.
 
-After setup, your project will have:
+## Events
 
-```
-your-project/
-├── reqdrive.json              # Pipeline configuration
-├── docs/requirements/         # Requirement documents
-│   ├── REQ-01-auth.md
-│   └── REQ-02-dashboard.md
-└── .reqdrive/
-    └── runs/
-        └── <req-slug>/        # Per-requirement run state (gitignore recommended)
-            ├── run.json       # Lifecycle status, PID, timestamps, PR URL
-            ├── prd.json       # Generated PRD with user stories
-            ├── checkpoint.json # Resume state
-            ├── prompt.md      # Current iteration prompt
-            ├── progress.txt   # Agent progress log
-            └── iteration-*.log # Raw agent output per iteration
-```
+Every line is a JSON object with the envelope
+`{"v":1,"attempt_id":"…","seq":n,"ts":"<RFC 3339, milliseconds, UTC>"}` and a `type`:
 
-## Writing Requirements
+| `type` | Fields | When |
+|---|---|---|
+| `progress` | `stage` (`validate`, `provision`, `red`, `red_published`, `green`, `check`, `deliver`, `done`) | A stage begins |
+| `heartbeat` | `waiting_on` (`agent`, `tests`, `push`) | Every 30 s while a child runs |
+| `usage` | `call_seq`, `model_id`, `provider`, `prompt`, `cached_prompt`, `cache_write`, `output`, `thinking`, `attributed` | One per API response, plus residue rows |
+| `log` | `stream` (`agent`, `test`, `system`), `line` | Selected lines: warnings and test-log tails |
+| `artifact` | `kind` (`tests_ref`, `branch`, `criteria_map`, `log_file`), `ref`, `sha` | When produced |
+| `error` | `category`, `retryable`, `detail` | Each failure, fatal or not |
+| `result` | `outcome`, `head_sha`, `tests_ref_sha`, `red_observed`, `tests_defective`, `failure`, `evidence` | Once, last |
 
-Requirements are markdown files with the REQ ID prefix:
+Unknown is `null`, never 0. `thinking` is always `null`, because the CLI does not report it. The
+result is also written to `<state_dir>/result.json`, and every event, from `seq` 1, to
+`<state_dir>/events.jsonl`. Every result field is a claim. The orchestrator should re-read git and
+run the tests itself.
 
-```markdown
-# REQ-01: User Authentication
+**What `limits.tokens` counts.** Each usage row adds its uncached input, cache writes and output
+(`prompt - cached_prompt + output`); cache reads are excluded and an unknown count adds 0. Rows
+are counted as they stream in, except residue rows (usage the result reports that no streamed row
+covered), which are counted when the call ends, so one call can overshoot the limit.
 
-## Description
-Implement user login and registration.
+## Outcomes
 
-## Acceptance Criteria
-- [ ] Users can register with email/password
-- [ ] Users can log in and receive a session
-- [ ] Invalid credentials show error message
-```
+The outcomes are `pushed`, `no_change`, `failed` and `halted`. The table of which condition
+produces which outcome, category and retry flag is spec
+[section 3.5.1](docs/superpowers/specs/2026-10-30-story-harness-mode-design.md). It is the
+contract. The Rust implementation notes are in section 10 of the same document.
 
-## Pipeline Stages
+## Environment overrides
 
-When you run `reqdrive run REQ-01`:
+| Variable | Default | Meaning |
+|---|---|---|
+| `REQDRIVE_CLAUDE_BIN` | `claude` | The agent binary |
+| `REQDRIVE_HEARTBEAT_MS` | `30000` | Heartbeat interval |
+| `REQDRIVE_GRACE_MS` | `30000` | How long a child gets after an interrupt before it is killed |
 
-1. **Pre-flight checks** — Clean working tree, base branch exists, requirement file found
-2. **Branch creation** — Creates `reqdrive/req-01` from base branch
-3. **Phase 1: Planning** — Agent creates `prd.json` with user stories (up to 2 attempts)
-4. **Phase 2: Implementation** — One Claude invocation per story, deterministic selection by priority
-5. **PR creation** — Push branch, create GitHub PR with validation checklist from PRD
+Both intervals are capped at one hour. On Windows, `REQDRIVE_CLAUDE_BIN` must name a real `.exe`.
+Only the direct child can be killed there, and a `.cmd` shim leaves `node` running and holding the
+pipe.
 
-## Security
+Set `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` for SSH remotes. `GIT_TERMINAL_PROMPT=0` stops git's
+own prompts, but not ssh's, so without it a push can wait on a passphrase or host-key prompt until
+the deadline.
 
-By default, reqdrive runs in **interactive mode**, which prompts for permission on sensitive operations. Use `--unsafe` to grant the agent unrestricted access (required for `launch`).
+## Isolation
 
-**Only run in `--unsafe` mode in:**
-- Sandboxed environments (containers, VMs)
-- Projects where you trust the codebase
-- Systems without sensitive credentials
+The harness runs the repository's test command, and the agent writes tests, so **agent-written
+tests run arbitrary code as the user that runs the harness.** The harness limits its own writes: it
+keeps state in `state_dir`, writes only the attempt branch, the tests ref and the remote-tracking
+refs that a push updates, and never writes the shared git config. It cannot contain what an agent
+or a test does. Isolating each attempt is the orchestrator's job:
 
-Requirement content is scanned for dangerous patterns (shell injection, path traversal). PRD-derived fields are sanitized before prompt expansion.
+- Run each attempt in its own container, or in its own full clone.
+- Never let an untrusted attempt share a `.git` with a checkout you care about. Git worktrees share
+  config, hooks and the object store, so a test running in one worktree can poison the others.
+- The permission mode follows `isolation`. `container` means the orchestrator has isolated the
+  attempt, and the agent runs with `--permission-mode bypassPermissions`. `none` (the default) runs
+  the agent with `acceptEdits`, plus an allow-list of the test command and `agent_allow`.
+- Every git call the harness makes disables repository hooks (`core.hooksPath` points at an empty
+  directory), fsmonitor, external diff programs and automatic gc. That keeps the harness's own
+  commits and pushes predictable. It does not make a hostile repository safe.
+- **The agent and the test command inherit the harness's environment**: the SSH agent, credential
+  helpers and any tokens in it. (Only the variables that point git at another repository, such
+  as `GIT_DIR`, are removed.) So agent-written tests can push, or reach anything those
+  credentials reach, on their own. "Nothing denied is pushed" covers only the pushes the harness
+  makes. Give each attempt its own credentials, scoped to its branch and tests ref.
+- **Without `--bare`, the agent loads configuration it does not choose.** The user's and the
+  project's `.claude/` hooks, plugins and MCP servers (`.mcp.json`) load into every agent call.
+  The denied paths stop the agent adding them, but not ones already in the repository or the
+  user's home.
+- **Check is not hermetic.** The tree is reset with `reset --hard` and `clean -fd`, which keep
+  ignored files, so a build output or dependency directory left by an earlier run can make Check
+  pass. The orchestrator must run its own tests on a fresh checkout before it merges.
+- On Windows, attempts that are worktrees of one repository share an object store, and two that
+  write byte-identical objects at the same moment can fail with "Permission denied" while
+  committing or pushing. Separate clones avoid it.
 
-## Risk Tiers and Scope Checking
+## Processes and signals
 
-`reqdrive.json`'s `policy` field (see Configuration above) lets you flag
-sensitive paths and have the pipeline notice when they change without
-evidence that tests still pass.
+- On Unix, every child runs in its own process group. Interrupt and kill go to the whole group, so
+  processes started by a test command stop too. The grace period applies to the group's leader;
+  once the leader has exited, after an interrupt or not, the rest of the group is killed at once.
+- On Windows only the direct child is killed, and it is killed at the interrupt without a grace
+  period.
+- No child holds the harness's stdout or stderr, so a leftover process cannot keep the
+  orchestrator's pipe open or write events. (On Windows the harness makes its std handles
+  non-inheritable at startup.)
+- After the agent exits, the harness reads the rest of its stdout for the grace period (at least
+  1 s). If a leftover process still holds the pipe open after that, the harness stops reading,
+  keeps what it has, and emits a `usage_incomplete` error.
+- SIGINT, SIGTERM and SIGHUP (Ctrl-C and Ctrl-Break on Windows) make the harness stop the current
+  child, write a `halted` result with category `interrupted`, and exit 0. Closing the console
+  window on Windows ends the process without a result.
+- Concurrent attempts are safe when each has its own workspace (isolated as above) and `state_dir`.
 
-**Prefix semantics.** `policy.riskTiers` maps tier names (`high`, `medium`,
-`low`) to arrays of path prefixes — not globs. A changed path matches a
-tier when it equals the prefix exactly or begins with `"<prefix>/"`. `src/auth`
-matches `src/auth` and `src/auth/login.ts`, but not `src/authorization/x.ts` —
-sharing characters isn't sharing a directory boundary. When a path matches
-prefixes in more than one tier, the highest tier wins.
-
-**The violation condition.** After each implementation iteration, the
-pipeline diffs the commit the agent just made (`git diff HEAD~1 HEAD`) and
-classifies the changed paths. A finding is a **high-risk path changed in an
-iteration whose `testCommand` run did not pass** — including iterations
-where no `testCommand` is configured at all, since there's no evidence
-either way.
-
-**Two modes**, set via `policy.scopeCheck`:
-
-- `"warn"` (default) — the finding is appended to
-  `.reqdrive/runs/<req-slug>/scope-findings.txt`, logged to the console, and
-  rendered into the PR body under a `### Scope findings` section. The
-  pipeline continues and the exit code is unchanged.
-- `"block"` — the same finding is logged, and the iteration additionally
-  aborts the pipeline with exit code 8 (`EXIT_PREFLIGHT_FAILED`) — reused
-  because a scope violation is a policy pre-condition, not a new failure
-  category.
-
-**Why `warn` is the default.** This is a hard gate the roadmap has wanted for
-a while, but the architecture's "warn before enforce" principle applies: no
-run has generated warn-mode data yet, so there's no basis for judging the
-gate's false-positive rate against real risk-tier configurations. `warn`
-ships first so that data can accumulate; flipping to `"block"` is a one-line
-config change once it does.
-
-```json
-{
-  "policy": {
-    "riskTiers": {
-      "high": ["src/auth", "src/payments"],
-      "medium": ["src/api"],
-      "low": ["docs"]
-    },
-    "scopeCheck": "warn"
-  }
-}
-```
-
-## Testing
-
-```bash
-# Run simple tests (no external dependencies)
-bash tests/simple-test.sh
-
-# Run full test suite (requires bats-core)
-bash tests/run-tests.sh
-```
-
-## Project Structure
+## Development
 
 ```
-reqdrive/
-├── bin/reqdrive         # CLI entry point
-├── lib/
-│   ├── config.sh        # Configuration loading
-│   ├── errors.sh        # Exit codes and error helpers
-│   ├── init.sh          # Interactive setup wizard
-│   ├── preflight.sh     # Pre-run safety checks
-│   ├── run.sh           # Core pipeline: planning + implementation
-│   ├── pr-create.sh     # PR creation with validation checklist
-│   ├── sanitize.sh      # Input sanitization
-│   ├── schema.sh        # Schema version checking + JSON validation
-│   └── validate.sh      # Config validation command
-├── templates/           # Template files
-├── tests/               # Test suite
-├── skills/              # Claude Code skills
-└── archive/             # Archived v0.1.x code
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-## Archived v0.1.x Features
-
-The following features from v0.1.x are archived and may return in future versions:
-
-- Parallel execution with git worktrees
-- Dependency ordering for multi-requirement runs
-
-See `archive/v1-complex/` for the original implementation.
+CI runs the same three commands on Linux and Windows. [`CLAUDE.md`](CLAUDE.md) describes the code
+layout, and [`ROADMAP.md`](ROADMAP.md) lists what is planned.
 
 ## License
 
-MIT
+MIT. See `LICENSE`.

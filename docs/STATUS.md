@@ -1,99 +1,73 @@
-# reqdrive — Status
+# Status
+
+The living status of the repository. The state summary is rewritten in place each session. The
+session log below it is appended newest first.
 
 ## State summary
 
-**Readiness:** L3 on the Readiness Ladder (L0 Specified, L1 Correct, L2
-Trustworthy, L3 Agent-operable, L4 Shippable) — target met. L4 is not
-targeted: reqdrive is a harness, not a shipped product.
+- **TL;DR:** the Rust story harness (`reqdrive story <work-order.json>`) is built and tested
+  offline against a fake agent. The final whole-branch review is done, its findings are fixed,
+  and a scoped re-review confirmed every fix. The Windows handle-inheritance issue is fixed. A
+  single live `claude` call confirmed the stream-json parser against real output.
+- **Branch:** `feat/story-harness-rust`, PR #7 against `main` (the spec PR #6 is merged).
+- **Readiness:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`
+  pass in CI on Ubuntu and Windows.
+- **Known gaps:** see [`ROADMAP.md`](../ROADMAP.md) (a live end-to-end story, thinking tokens,
+  deferred scope, open questions Q4 to Q14, planned improvements, known minor issues).
+- **Next steps:**
+  1. Merge PR #7 once CI is green.
+  2. Run a live end-to-end story on a sandbox repository, with the owner's go-ahead (ROADMAP, Next).
 
-**What changed:** the whole roadmap-completion effort (P0-P7) took reqdrive
-from L0 to L3. P0 repaired the test harness — it structurally could not
-report a failure, because `set -e` truncated the suite on the first error
-instead of tallying it, so "all green" was guaranteed by construction. P1
-wrote behavior-spec stories for every assertion. P2 froze the suite behind
-a whole-file-hash tamper-evidence gate (`tests/oracle-gate.sh`). P3 built a
-pipeline test harness. P4 made the draft-PR gate fail-closed — a PR is only
-opened non-draft when `prd.json` is present, zero stories remain incomplete,
-and `testCommand` positively passed (the L2 fix). P5 added three
-doc-coverage gates and automated the `launch` lifecycle (the L3 gates). P6
-rewrote the implementation prompt heredoc safely (quoted heredoc + explicit
-`@@TOKEN@@` substitution) and added `reqdrive verify` as a standalone
-command. P7 added the policy cluster — risk tiers by path and a hard-gated
-post-iteration scope check. All CLAUDE.md Tier 2 roadmap items are now
-complete.
-
-**Known gaps:**
-- `launch` lifecycle coverage is Linux-CI-only — PID liveness and signal
-  trapping are unreliable under MSYS2, so that coverage does not extend to
-  Windows/MSYS2 runs.
-- The review agent is not a genuine writer≠grader: it uses the same model
-  as the implementer, is off by default (`reviewCommand` empty), and runs
-  after PR creation, so it cannot influence the draft decision. See the
-  CLAUDE.md Decision Log.
-- Config load does not schema-validate; `reqdrive validate` remains the
-  validation entry point (see the CLAUDE.md Decision Log entry on deferring
-  config-load-time schema validation).
-- Open items tracked in `tests/FINDINGS.md`, all triaged Open — deferred /
-  accepted risk, not blocking:
-  - **F2** — an unanchored `$HOME` grep in one `tests/simple-test.sh`
-    assertion.
-  - **F3** — `build_implementation_prompt` (`lib/run.sh:285-288`) writes a
-    blank Title/Description/Criteria when `jq` fails on malformed story
-    JSON, with no guard or assertion.
-  - **F4** — 18 assertions suite-wide end in a pure negative and cannot
-    detect a setup failure (measured 2026-07-23).
-  - **F6** — the draft-PR gate's `prd_present==0` branch (mid-run deletion
-    of `prd.json`) is defensive and fails closed by construction, but is
-    not exercised by a dedicated test.
-
-**Next steps:** Tier 3, in the order recorded in the CLAUDE.md Decision Log:
-vision-based QA agent, multi-requirement parallelism (`orchestrate`), PR
-rejection feedback loop, CI integration, cost tracking / token budgets,
-adaptive retry policies. The cheapest next item is CI integration
-(`gh pr checks` polling — cheap in bash, but wants its own spec for the new
-failure mode a polling loop introduces). The highest-value item is
-vision-based QA, which is out of scope for this harness — it needs
-Playwright and binary image data and is properly a separate Node/Python
-product with its own readiness ladder.
-
-## Corrections owed to WORKFLOW.md
-
-`WORKFLOW.md` is not reachable from this checkout (it lives outside this
-repo), so the correction below could not be applied directly and is
-recorded here for manual application.
-
-WORKFLOW.md §10 records reqdrive's starting position as **"L2, gap
-docs-only"**, and §9's worked example repeats the same claim. Both are
-wrong. reqdrive's true starting rung was **L0**, not L2:
-
-- The claimed L1 (Correct) was not actually held: the test harness used
-  `set -e`, which meant the suite could not report a failure at all — a
-  failing assertion aborted the script before the pass/fail tally ran, so
-  "157 passed, 0 failed" was guaranteed by construction regardless of
-  whether the code was correct. A suite that cannot fail cannot certify L1.
-- The claimed L2 (Trustworthy) was not actually held either: the draft-PR
-  gate fail-*opened* in three distinct ways (a non-draft PR could be
-  created without positive evidence of success). The original WORKFLOW.md
-  survey found and recorded one of the three; the other two were only
-  found during this effort's P4 phase.
-
-Both the §10 table row and the §9 worked example should be corrected to
-show reqdrive starting at **L0** (not L2) and reaching **L3** as of
-2026-07-23 (not L4, since L4 is not targeted for a harness).
+Design: [`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](superpowers/specs/2026-10-30-story-harness-mode-design.md).
+Plan: [`docs/superpowers/plans/2026-10-30-story-harness-rust.md`](superpowers/plans/2026-10-30-story-harness-rust.md).
+Roadmap: [`ROADMAP.md`](../ROADMAP.md).
 
 ## Session log
 
-### 2026-07-23 — Roadmap completion (P0-P7): L0 to L3
-Eight-phase effort (P0-P7) taking reqdrive from Readiness Ladder rung L0 to L3.
-P0 repaired the test harness (it structurally could not report a failure).
-P1 wrote behavior-spec stories for all original assertions. P2 froze the
-suite with a whole-file-hash tamper-evidence gate. P3 built a pipeline test
-harness. P4 made the draft-PR gate fail-closed (the L2 fix). P5 added three
-doc-coverage gates and automated the `launch` lifecycle (the L3 gates). P6
-rewrote the implementation prompt heredoc safely and added `reqdrive
-verify`. P7 added the policy cluster (risk tiers by path + hard-gated scope
-check). All CLAUDE.md Tier 2 roadmap items completed; Tier 3 recorded as
-deferred, with a reason per item, in the CLAUDE.md Decision Log. Frozen
-suite: 202/202 passing. `ROADMAP.md` (the v0.2.0 simplification plan)
-marked superseded by CLAUDE.md's Roadmap section. This file created per the
-global `docs/STATUS.md` convention.
+### 2026-10-31: live check, merges
+
+- **Live check:** one real Haiku call (`claude` 2.1.296). The parser's field paths matched; the
+  scrubbed output is the fixture for `live_fixture_parses`. The CLI's side calls show up as a
+  `modelUsage` residue for the same model. New finding: the CLI now reports thinking tokens
+  (ROADMAP, Next).
+- **Merged:** PR #6 (the spec and plan) and PR #8 (the factory plans no longer name a private
+  repository or local paths; earlier history still has the old text).
+- **State delta:** PR #7 targets `main`; the only open item before merge is its CI run.
+
+### 2026-10-31: Windows handle inheritance
+
+- **Fixed:** on Windows every child (and its descendants) held the harness's stdout and stderr
+  through std's handle inheritance, so a descendant outliving the run kept the orchestrator's pipe
+  open. `main` now clears `HANDLE_FLAG_INHERIT` on the three std handles first
+  (`proc::stop_std_handle_inheritance`); a Windows-only test reads stdout to EOF past a 20 s
+  null-stdio orphan.
+- **State delta:** the ROADMAP item is closed; CLAUDE.md, the README and spec section 10 updated.
+
+### 2026-10-31: final review fixes
+
+- **Fixed:** a leftover process holding the agent's stdout no longer hangs the run (the reader is
+  abandoned after the grace, with `usage_incomplete`); a closed stdout stops the run as
+  `halted`/`interrupted` while `events.jsonl` and `result.json` are still written; a commit made
+  by the test command is caught (`scope_violation`) and never pushed, and Deliver pushes exactly
+  the commit Check ran on. Also: turns gate only agent calls, forge CI paths are denied,
+  repository-locating `GIT_*` vars are removed for every child, residue unknowns are `null`, and a
+  set of smaller validation, git-config and documentation items.
+- **State delta:** review findings closed; spec section 10 and the README updated to match. Not
+  done: CI on Linux, a PR, the live check.
+
+### 2026-10-30: the Rust story harness
+
+- **Built:** the Bash tree moved unchanged to `archive/bash-v0.3/`. A cargo workspace with one
+  package, `crates/reqdrive`, now holds the harness: work-order validation, the event emitter,
+  path and criterion rules, prompts, the stream-json usage parser, the inference policy, supervised
+  child processes, git operations, the claude-code adapter and the driver (Red, Green, Check,
+  Deliver), plus the test-only `fake-claude` binary. README, CLAUDE.md, this file and the roadmap
+  were written fresh for it.
+- **Reviewed:** built in 12 tasks, each implemented and then reviewed independently, with fix rounds
+  on the five tasks whose review found problems (Tasks 3, 5, 7, 10 and 11) and automated security
+  review findings handled on Tasks 3, 5 and 7. Eleven rulings were recorded along the way (R1 to
+  R11), covering test plumbing, path-rule hardening, git-config hardening, an accepted residual
+  isolation risk, push outcomes and evidence pushes. The spec was amended with the three that
+  change its wording: R7, R10 and R11.
+- **State delta:** v1 built and tested offline. Not done: the live check, the final whole-branch
+  review, CI on Linux, a PR.

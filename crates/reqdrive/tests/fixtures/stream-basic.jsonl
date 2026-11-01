@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","session_id":"s1","model":"claude-a"}
+warning: something
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","model":"claude-a","usage":{"input_tokens":10,"cache_creation_input_tokens":5,"cache_read_input_tokens":20,"output_tokens":1}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_2","model":"claude-a","usage":{"input_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":30,"output_tokens":1}}}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}}
+{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"done"}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"done","modelUsage":{"claude-a":{"inputTokens":13,"outputTokens":11,"cacheReadInputTokens":50,"cacheCreationInputTokens":5,"costUSD":0.01},"claude-helper":{"inputTokens":2,"outputTokens":1,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"costUSD":0.001}}}
+{"type":"stre

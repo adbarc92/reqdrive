@@ -1,282 +1,108 @@
-# CLAUDE.md — reqdrive
+# CLAUDE.md
 
-## What is reqdrive?
+`reqdrive story <work-order.json>` runs one story to one pushed branch and reports it as JSON-lines
+events on stdout. This file is for agents working in this repository. The user-facing description
+is in [`README.md`](README.md).
 
-Requirements-driven development pipeline. A Bash CLI that automates the flow from markdown requirement documents to GitHub pull requests using Claude Code as the AI agent.
+**This repository is public.** Never name or describe a private project, client, employer, person,
+machine or business plan in code, comments, docs, commits or PRs. Write the orchestrator generically
+("an external orchestrator"). No machine-specific paths (drive letters, user names, local target
+directories) in any file.
 
-**Version:** 0.3.0 (schema version 0.3.0)
+## Where things stand
+
+- Design: [`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](docs/superpowers/specs/2026-10-30-story-harness-mode-design.md).
+  Section 3 is the behaviour, 3.5.1 the outcome table, 10 the Rust implementation. Where the
+  design and a plan disagree, the design is right.
+- Plan: [`docs/superpowers/plans/2026-10-30-story-harness-rust.md`](docs/superpowers/plans/2026-10-30-story-harness-rust.md)
+- State and session log: [`docs/STATUS.md`](docs/STATUS.md)
+- The only roadmap: [`ROADMAP.md`](ROADMAP.md). Add future work there, not in a new file.
+
+The other plans in `docs/superpowers/plans/` (the factory M0 and M1 plans, the earlier roadmap
+completion plan) are not the current path. `archive/bash-v0.3/` is frozen history.
 
 ## Architecture
 
+One cargo workspace, one package, `crates/reqdrive`: a binary, a library the tests use, and a
+test-only binary.
+
 ```
-bin/reqdrive          CLI entry point — argument parsing, command dispatch
-lib/
-  errors.sh           Exit codes (0-8) and die/die_on_error helpers
-  schema.sh           Schema version checking + JSON validation (config, PRD, checkpoint)
-  config.sh           Find reqdrive.json (walks up), export REQDRIVE_* env vars
-  sanitize.sh         Input sanitization (prompts, labels, content, file paths)
-  preflight.sh        Pre-run safety checks (clean tree, branch, req file exists)
-  run.sh              Core pipeline: planning → implementation → verification → review → PR
-  pr-create.sh        Build and submit GitHub PR with verification data + validation checklist + review findings
-  init.sh             Interactive setup wizard — creates reqdrive.json + directories
-  validate.sh         Config validation command
-templates/
-  reqdrive.json.example   Example configuration
-tests/
-  simple-test.sh      Primary test suite (157 tests, no external dependencies)
-  run-tests.sh        Full test suite runner (requires bats-core)
-  fixtures/           JSON fixtures for schema validation tests
-  BEHAVIOR-SPEC.md    Behavioral contract for modules 1-4
-skills/               Claude Code skills (design-to-prd, prd, project-journal, verification-workflow)
-archive/              Archived v0.1.x code (parallel execution, worktrees, etc.)
+crates/reqdrive/src/
+  main.rs            parses `reqdrive story <file>`, runs it under catch_unwind, writes the result
+  workorder.rs       work-order types; shape validation (pure)
+  outcome.rs         Outcome, Category, retryable, ResultEvent
+  events.rs          event bodies; the Emitter (envelope, seq, ts; stdout + events.jsonl)
+  paths.rs           prefix rules: denied, frozen, test paths
+  criteria.rs        whole-word criterion-id check over added diff lines
+  prompts.rs         Red and Green prompts; reading the agent's final text
+  stream.rs          stream-json parser: usage rows, final result, residue (pure)
+  policy.rs          inference-policy check and the agent's environment
+  limits.rs          deadline, turn budget, token counter
+  proc.rs            supervised children: process groups, deadline, interrupt, kill, signal flag
+  git.rs             git through `git -C <workspace>` with a fixed identity
+  agent.rs           the claude-code adapter: arguments, one call, its outcome
+  story.rs           the driver: stages, the result on every path, the heartbeat
+  bin/fake-claude.rs test-only stand-in for `claude`, plus the `check-tests`, `spew` and `hold` helpers
+crates/reqdrive/tests/   integration tests that run the real binaries; common/ holds helpers
 ```
 
-## Pipeline Flow
+## Principles
 
-1. **Pre-flight checks** — clean working tree, base branch exists, requirement file found
-2. **Branch creation** — `reqdrive/<req-slug>` from base branch
-3. **Phase 1: Planning** — Claude generates `prd.json` with user stories (up to 2 attempts)
-4. **Phase 2: Implementation** — One Claude invocation per story, deterministic selection by priority. Per-iteration test execution and commit verification with result tracking.
-5. **Phase 3: Verification** — Collect story stats, run final test suite, generate `verification-summary.json`. Failed verification forces draft PR.
-6. **PR creation** — Push branch, create GitHub PR with verification data table + validation checklist from PRD
-7. **Phase 4: Review** — If `reviewCommand` is configured, run post-PR code review. `"builtin"` uses Claude to review the diff; any other string runs as an external command. Findings appended to PR body via `gh pr edit`. Warn-only (never aborts pipeline).
-
-## Architectural Principles
-
-- **Shell orchestrates, agent implements.** `run.sh` controls what story to work on, when to stop, and when to create the PR. Claude controls how to write the code. The shell selects stories via jq (`select_next_story`, line 347), builds prompts, and manages checkpoints. The agent never decides what to work on next. This separation prevents agent drift and makes the pipeline deterministic.
-
-- **Stateless agent invocations.** Each Claude call is a fresh session with no memory of prior iterations. Context carries only through files: `progress.txt`, `prd.json`, and git history. This avoids context window exhaustion on long runs and makes each iteration independently reproducible.
-
-- **Deterministic story selection.** `select_next_story` in `lib/run.sh:347` uses jq to pick the highest-priority incomplete story under the retry limit. The agent cannot cherry-pick easy stories or skip hard ones. Priority ordering is set during planning and respected during implementation.
-
-- **Artifact format contracts.** JSON for machine state (`prd.json`, `checkpoint.json`, `run.json`, `iteration-N.summary.json`). Markdown for human/agent context (`progress.txt`, `prompt.md`). Schema validation in `lib/schema.sh` enforces the boundary. Breaking these formats breaks the pipeline.
-
-- **Warn before enforce.** New checks start as logged warnings, graduate to checkpoint annotations, then promote to hard gates — only after observing real failure patterns. `testCommand` execution and commit verification currently run in observation mode (warn, don't abort). Schema validation is warn-only in most contexts. Don't make things strict without data.
-
-- **Input sanitization is non-optional.** All user/agent content goes through `sanitize_for_prompt` (`lib/sanitize.sh:35`) before heredoc expansion. Labels go through `sanitize_label`. Content is scanned for shell injection, path traversal, and dangerous commands. This is a security boundary.
-
-- **Bash for orchestration, other languages for API-heavy modules.** The CLI and pipeline stay in Bash — portable, minimal dependencies, runs on MSYS2/WSL/Linux. Future modules requiring binary data or complex API calls (e.g., vision-based QA with screenshots) should be Node or Python, called from the Bash orchestrator.
-
-## Key Files and State
-
-- **Config:** `reqdrive.json` at project root (found by walking up directory tree)
-- **Run state:** `.reqdrive/runs/<req-slug>/` per requirement
-  - `run.json` — lifecycle status, PID, timestamps, PR URL
-  - `prd.json` — PRD with user stories (generated by agent)
-  - `checkpoint.json` — resume state (iteration, branch, completed stories, commit SHA)
-  - `progress.txt` — agent progress log
-  - `prompt.md` — current iteration prompt
-  - `iteration-N.log` — raw agent output per iteration
-  - `iteration-N.summary.json` — structured summary per iteration
-  - `iteration-N.test.log` — test command output per iteration
-  - `verification-summary.json` — pipeline verification results (stories, tests, commits)
-  - `verification.test.log` — final test suite output
-  - `review-prompt.md` — review agent prompt (builtin mode)
-  - `review.log` — raw review agent output
-  - `review-findings.json` — structured review findings (JSON array)
-  - `output.log` — stdout/stderr capture for `launch` command
+- **The driver orchestrates; the agent implements.** The harness owns every counter and makes every
+  commit. The agent edits files and runs the test command. It never runs git and never writes
+  state. The driver owns the expected HEAD; HEAD is checked after every agent call and test run
+  and before every push, and a mismatch is `scope_violation`.
+- **Unknown is `null`, never 0.** Every count is an `Option<u64>`.
+- **Children never inherit stdout.** Every `Command` sets `stdin` (null, or a file for the prompt)
+  and an explicit `stdout`. A child must not be able to forge an event. On Windows std passes every
+  inheritable handle to every child whatever its `Stdio`, so `main` first makes the harness's own
+  std handles non-inheritable (`proc::stop_std_handle_inheritance`).
+- **The seam rules are hard gates; everything else is warn-only.** Denied paths, the test freeze,
+  the criterion-id check and the red check fail the attempt. Heuristics, such as the
+  dangerous-pattern scan, become `log` events and never block.
+- **Errors are values.** `story::run` returns a `ResultEvent` on every path. Exactly one result is
+  written, last.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `init` | Interactive setup — creates `reqdrive.json` and directories |
-| `run <REQ-ID>` | Foreground pipeline (supports `--interactive`, `--unsafe`, `--force`, `--resume`) |
-| `launch <REQ-ID>` | Detached background run (nohup + `--unsafe`) |
-| `status [REQ-ID]` | Show run status with PID liveness checking |
-| `logs <REQ-ID>` | Tail `output.log` for a background run |
-| `validate` | Validate `reqdrive.json` config |
-| `migrate` | Add version fields to pre-0.3.0 configs/PRDs |
-| `plan <REQ-ID>` | Standalone PRD generation (plan only, no implementation) |
-| `orchestrate` | Coming soon — multi-requirement sequencing |
-
-## Configuration (`reqdrive.json`)
-
-| Field | Default | Type |
-|-------|---------|------|
-| `version` | — | string (`"0.3.0"`) |
-| `requirementsDir` | `"docs/requirements"` | string |
-| `testCommand` | `""` | string |
-| `model` | `"claude-sonnet-4-20250514"` | string |
-| `maxIterations` | `10` | number |
-| `baseBranch` | `"main"` | string |
-| `prLabels` | `["agent-generated"]` | array |
-| `projectName` | `""` | string |
-| `completionHook` | `""` | string (shell command) |
-| `reviewCommand` | `""` | string (`"builtin"` or shell command) |
-
-## Exit Codes
-
-| Code | Name | Meaning |
-|------|------|---------|
-| 0 | `EXIT_SUCCESS` | Success |
-| 1 | `EXIT_GENERAL_ERROR` | General error |
-| 2 | `EXIT_MISSING_DEPENDENCY` | Missing required tool |
-| 3 | `EXIT_CONFIG_ERROR` | Configuration error |
-| 4 | `EXIT_GIT_ERROR` | Git operation failed |
-| 5 | `EXIT_AGENT_ERROR` | Agent execution failed |
-| 6 | `EXIT_PR_ERROR` | PR creation failed |
-| 7 | `EXIT_USER_ABORT` | User aborted |
-| 8 | `EXIT_PREFLIGHT_FAILED` | Pre-flight checks failed |
-
-## Decision Log
-
-> **Maintainers:** Add entries here when making significant architectural decisions.
-> Future sessions will read this to avoid re-litigating settled questions.
-
-- **[v0.2.0] Bash over Node/Python for the CLI.**
-  **Why:** Portable (runs on MSYS2, WSL, Linux VPS), minimal deps (bash/jq/git/gh), no package manager needed. The user runs reqdrive across Windows and Linux environments.
-  **Alternatives:** Node (adds npm), Python (adds venv/uv). Neither justified for shell orchestration.
-
-- **[v0.2.0] Simplification from 17 scripts to 5 (the "Ralph pattern").**
-  **Why:** v0.1.x had 1,679 lines across 13 library files with parallel execution, worktrees, dependency graphs, and a 30-field config. Most of it was unused complexity. The core insight: pipe prompts to Claude in a loop, let the shell control iteration. See `docs/SIMPLIFICATION-SUMMARY.md`.
-  **Alternatives:** Keep the enterprise architecture. Rejected because it shipped nothing.
-
-- **[v0.3.0] Per-requirement run directories (`.reqdrive/runs/<slug>/`).**
-  **Why:** Isolates state per requirement. Enables concurrent status checking and future parallel runs. Previously all state lived in `.reqdrive/agent/`.
-  **Alternatives:** Single shared directory (caused state collision between requirements).
-
-- **[v0.2.0] Worktree support archived.**
-  **Why:** Git worktrees added complexity (setup, cleanup, merge conflicts) for a feature that wasn't needed yet. Archived in `archive/v1-complex/lib/worktree.sh` for potential revival in `reqdrive orchestrate`.
-  **Alternatives:** Keep worktrees. Rejected — sequential runs are sufficient for single-requirement pipeline.
-
-- **[v0.3.0] Schema validation is warn-only by default.**
-  **Why:** Follows "warn before enforce" principle. Strict validation would block the pipeline on minor schema issues the agent might fix in the next iteration. Graduated enforcement: log → annotate → gate.
-  **Alternatives:** Strict validation. Rejected until false-positive rates are understood.
-
-- **[v0.3.0] Unquoted heredoc for implementation prompts.**
-  **Why:** `build_implementation_prompt` (`lib/run.sh:274`) uses `<<PROMPT_IMPL` (unquoted) to enable `${story_id}`, `${story_title}` expansion. The planning prompt uses `<<'PROMPT_PLAN'` (quoted) because it has no variables. Sanitization via `sanitize_for_prompt` mitigates expansion risks, but the structural pattern remains fragile.
-  **Alternatives:** Quoted heredoc + `sed`/`envsubst` for variable injection. Deferred to Tier 2.
-
-- **[v0.3.0] `launch` always uses `--unsafe` mode.**
-  **Why:** Background runs can't prompt for permissions. `--unsafe` (`--dangerously-skip-permissions`) is the only viable mode for `nohup` detached execution.
-  **Alternatives:** None — interactive permission prompts require a TTY.
-
-- **[v0.3.0] One Claude invocation per story (stateless).**
-  **Why:** Prevents context window exhaustion on long runs. Each iteration starts fresh. Context from prior iterations flows through files (`progress.txt`, git history), not conversation state.
-  **Alternatives:** Single long-running session. Rejected — context limits cause degraded output quality.
-
-- **[v0.3.0] jq for story selection, not agent choice.**
-  **Why:** `select_next_story` uses jq to deterministically pick the next story by priority. If the agent chose, it could skip hard stories, reorder arbitrarily, or work on completed stories.
-  **Alternatives:** Agent self-selects. Rejected — removes pipeline determinism.
-
-- **[Audit] Vision-based QA agent should be Node/Python.**
-  **Why:** Requires Playwright browser control and Claude Vision API with binary image data. Bash can't handle this. Called from Bash orchestrator as a subprocess.
-
-- **[Audit] testCommand: warn-only, promote to hard gate after observing failure patterns.**
-  **Why:** False positives in test execution (flaky tests, environment issues) would block the pipeline unnecessarily. Run tests, log results, don't abort — until failure rate data justifies enforcement.
-
-- **[2026-07-23] Vision-based QA agent deferred.**
-  **Why:** Needs Playwright + binary image data; a separate Node/Python product with its own ladder.
-
-- **[2026-07-23] Multi-requirement parallelism (`orchestrate`) deferred.**
-  **Why:** Needs worktree revival (`archive/v1-complex/lib/worktree.sh`); its own design cycle.
-
-- **[2026-07-23] PR rejection feedback loop deferred.**
-  **Why:** Depends on review-comment parsing; no failure data yet.
-
-- **[2026-07-23] CI integration (`gh pr checks` polling) deferred.**
-  **Why:** Cheap in bash but a new failure mode; wants its own spec.
-
-- **[2026-07-23] Cost tracking / token budgets deferred.**
-  **Why:** The `claude` CLI does not surface per-invocation tokens to the shell.
-
-- **[2026-07-23] Adaptive retry policies deferred.**
-  **Why:** Needs historical success-rate data that does not exist until the pipeline runs at scale.
-
-- **[2026-07-23] Config-load-time schema validation deferred.**
-  **Why:** Wiring `validate_config_schema` into `reqdrive_load_config` would newly reject configs that load today (risking US-CFG-04/05 and minimal fixtures); `reqdrive validate` remains the validation entry point.
-
-- **[2026-07-23] The review agent is not a genuine writer≠grader.**
-  **Why:** Same model as the implementer, off by default, runs after PR creation so it cannot influence the draft decision. Making it real needs a distinct `reviewModel` and a pre-PR position.
-
-## Roadmap
-
-> **Maintainers:** Check off items as completed. Add new items as they're identified.
-> Update this section whenever you finish work or make scope decisions.
-
-### Tier 1 — Build Now (overnight reliability)
-
-- [x] Wire up `testCommand` execution after implementation iterations — `lib/run.sh:813-821`, warn-only mode
-- [x] Add post-iteration commit verification — `lib/run.sh:824-828`, checks commit message format
-- [x] Add per-story retry limit — `select_next_story` respects `attempts` field, max via `maxStoryRetries` config (default 3), attempt counter incremented at `lib/run.sh:832`
-- [x] Add `priority` field to schema validation — `lib/schema.sh:141`
-- [x] Add commit SHA to checkpoint for resume safety — `lib/run.sh:80` saves SHA, line 128 verifies on resume
-- [x] Implement `reqdrive plan` as standalone PRD generation — `bin/reqdrive:378-421`, fully functional
-
-### Tier 2 — Build Next (trustworthy unattended merges)
-
-- [x] Verification phase between implementation and PR creation — `lib/run.sh` Phase 3, generates `verification-summary.json`, runs final test suite, failed verification forces draft PR
-- [x] Enriched PR body with test results, iteration log summary, and verification data — `lib/pr-create.sh` reads `verification-summary.json`, adds Pipeline Verification table
-- [x] Per-iteration result tracking in `run.json` — `summary` field with tests/commits/stories counts via `RUN_SUMMARY_*` accumulators
-- [x] Post-iteration scope checking (diff analysis to detect out-of-scope changes) — `policy_scope_check()` in `lib/policy.sh:54`, called from `lib/run.sh:1089`; hard gate, not advisory
-- [x] `reqdrive verify <REQ-ID>` as standalone command — `cmd_verify()` in `bin/reqdrive:440`
-- [x] Heredoc structural fix — `build_implementation_prompt` (`lib/run.sh:324`) now uses a quoted heredoc (`<<'PROMPT_IMPL'`) with explicit `@@TOKEN@@` substitution instead of shell expansion
-- [x] Post-PR review agent step — `run_review_phase()` in `lib/run.sh`, `update_pr_with_review()` in `lib/pr-create.sh`. Configurable via `reviewCommand` (`"builtin"` for Claude review, or external command). Findings appended to PR body.
-- [x] Risk tiers by path — `policy_tier_for_path()` in `lib/policy.sh:12`, path-prefix classification (high/medium/low/none) driven by the `policy` block in config
-- [x] Contract/policy definition file — `lib/config.sh:87-89` loads `reqdrive.json`'s `.policy` object into `REQDRIVE_POLICY_JSON`/`REQDRIVE_POLICY_SCOPE_CHECK`, defining risk tiers and scope-check mode consumed by `lib/policy.sh`, `lib/run.sh`, and `lib/pr-create.sh`
-
-### Tier 3 — Build Eventually (full vision)
-
-- [ ] Vision-based QA agent (Playwright + Claude Vision API) — Node/Python subprocess
-- [ ] Multi-requirement parallelism via git worktrees (`reqdrive orchestrate`)
-- [ ] PR rejection feedback loop (parse reviewer comments, re-run targeted stories)
-- [ ] CI integration (poll `gh pr checks`, auto-fix on failure)
-- [ ] Cost tracking and token budgets per requirement
-- [ ] Adaptive retry policies based on historical success rates
-
-## Development Conventions
-
-- **Shell scripts:** Always use `set -euo pipefail` (entry) or `set -e` (libraries)
-- **Syntax check:** Run `bash -n <file>` on all modified `.sh` files before committing
-- **Tests:** Run `bash tests/simple-test.sh` — all 152 tests must pass
-- **No Co-Authored-By** in commit messages
-- **Schema version** `0.3.0` must be set in new JSON outputs (PRD, checkpoint, config)
-- **Sanitization:** All user/agent-provided content must go through `sanitize_for_prompt` before heredoc expansion. Labels go through `sanitize_label`.
-- **Preflight checks** run by default; `--force` bypasses them
-
-## Testing
-
-```bash
-# Primary test suite (no external deps, runs everywhere)
-bash tests/simple-test.sh
-
-# Full suite with bats (if available)
-bash tests/run-tests.sh
+```
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-Tests cover: config loading, schema validation, sanitization, error codes, preflight checks, iteration summary extraction, prompt injection protection, and CLI behavior.
+All three must pass before a commit. `CARGO_TARGET_DIR` may point outside the checkout (for example
+to a fast disk). Run one cargo build at a time.
+Integration tests find the bins through `CARGO_BIN_EXE_*`, which is not set for unit tests in
+`src/`, so any test that runs a bin belongs under `crates/reqdrive/tests/`.
 
-## Prerequisites
+## Conventions
 
-- `bash` 4.0+
-- `jq`
-- `git`
-- `gh` (GitHub CLI, authenticated)
-- `claude` (Claude Code CLI — only needed for `run`/`launch` commands)
-
-## Security Notes
-
-- `--unsafe` mode (`--dangerously-skip-permissions`) grants the agent unrestricted system access
-- `launch` always uses `--unsafe` mode
-- Requirement content is scanned for dangerous patterns (shell injection, path traversal)
-- PRD-derived fields are sanitized before heredoc expansion to prevent injection
-- Content validation is warn-only by default; use `--force` to bypass entirely
-
-## Known Pitfalls
-
-- **Heredoc quoting in implementation prompts.** `build_implementation_prompt` (`lib/run.sh:274`) uses an unquoted heredoc (`<<PROMPT_IMPL`) so `${story_id}` etc. expand. This means shell metacharacters in PRD-derived content can cause expansion bugs. `sanitize_for_prompt` escapes `$` and backticks, but the structural risk remains. The planning prompt (`lib/run.sh:187`) uses a quoted heredoc (`<<'PROMPT_PLAN'`) because it has no variables — this is the safe pattern. The fix (Tier 2) is to use quoted heredocs everywhere and inject variables via `sed`.
-
-- **`testCommand` is warn-only per iteration.** `testCommand` is auto-detected during `init` and executed after each implementation iteration (`lib/run.sh:813-821`), but per-iteration failures only produce warnings — they don't abort or retry that iteration. This is intentional (observe before enforce). However, the final result is no longer purely advisory: the Phase 3 draft-PR gate (`lib/run.sh:1176-1190`) is fail-closed and requires `testCommand` to have positively passed (not merely run) before it will open a non-draft PR. Treat per-iteration failures in `iteration-N.test.log` as signals requiring human review; treat the pipeline's final draft/ready decision as trustworthy.
-
-- **Agent self-reporting is not authoritative — and the pipeline no longer trusts it alone.** The agent still writes `passes: true` markers in `prd.json` and iteration summary self-reports, and it can (and sometimes does) mark stories complete without tests passing. But the Phase 3 draft-PR gate (`lib/run.sh:1176-1190`) is fail-closed: it drafts unless `prd.json` is present, zero stories remain incomplete, *and* `testCommand` positively passed — `passes: true` alone no longer opens a non-draft PR. The post-iteration commit check (`lib/run.sh:824-828`) remains a minimal independent signal at the per-iteration level.
-
-- **Platform differences (MSYS2/WSL/Linux).** The user runs reqdrive on Windows (MSYS2/Git Bash), WSL, and Linux VPS. Known issues: `nohup` behavior varies in MSYS2 (process tracking less reliable), `realpath` may not exist (used in `sanitize.sh:123`), `date -Iseconds` format varies across platforms, signal trapping (INT/TERM/HUP) is less reliable under MSYS2. The test suite runs on all platforms without platform-conditional logic.
-
-- **`launch` and `--unsafe` are inseparable.** `launch` always runs with `--dangerously-skip-permissions` (`bin/reqdrive:486`). This gives the agent unrestricted system access. Any changes to agent invocation must preserve the user's ability to choose between `--interactive` (foreground) and `--unsafe` (background/launch). Never default a foreground `run` to unsafe.
-
-- **Schema validation is intentionally lenient.** Don't "fix" validation by making it strict. The graduated enforcement path is: log warnings → annotate checkpoints → hard gate. PRD structure is validated but not content quality — a PRD with one story titled "Do everything" passes validation. Until a quality rubric is integrated, human review of `prd.json` after `reqdrive plan` is recommended.
-
-- **The `archive/` directory is not dead code.** Contains v0.1.x code including parallel execution (`orchestrate.sh`), worktree management (`worktree.sh`), dependency graphs (`deps.sh`), and a verification module (`verify.sh`). Archived during v0.2.0 simplification, not deleted, because the ideas may be revisited for `reqdrive orchestrate`. Don't delete it. Don't resurrect it without reading `docs/SIMPLIFICATION-SUMMARY.md`.
-
-- **No file locking on run directories.** Two concurrent `reqdrive run` commands targeting the same REQ-ID will race on shared files in `.reqdrive/runs/<slug>/`. The PID check in `launch` prevents double-launching, but there's no lock on the run directory itself.
+- Toolchain 1.93.1 (`rust-toolchain.toml`), edition 2021. `#![deny(unsafe_code)]` in `lib.rs`;
+  in `src/`, only `proc.rs`'s Unix `kill` calls and its Windows `SetHandleInformation` call carry
+  `#[allow(unsafe_code)]`. Do not use `forbid`.
+- The work-order `schema` is exactly `"story-work-order/0"`. The event envelope is
+  `{"v":1,"attempt_id","seq","ts"}`, applied after the body so a body cannot override it.
+- Outcomes: `pushed`, `no_change`, `failed`, `halted`. There is no `pr_open` in v1.
+- `test_command` runs through `sh -c` on Unix and `cmd` with `raw_arg("/S /C \"<cmd>\"")` on
+  Windows, always with `CI=true`.
+- Git runs as `git -C <workspace> -c core.hooksPath=<state_dir>/no-hooks …` with
+  `GIT_TERMINAL_PROMPT=0`, fsmonitor, external protocols and auto gc/maintenance off, and
+  `--no-ext-diff --no-textconv` on diffs. Commits use a fixed identity and `--no-verify`. Pushes are
+  `-c push.followTags=false -c push.recurseSubmodules=no push --no-verify <remote> <sha>:<ref>`,
+  never `-u`. Every `git diff … --name-only` carries `--no-renames`. git, the agent and the test
+  command all run without `proc::REPO_ENV` (`GIT_DIR` and the other repository-locating vars).
+- Unix children are spawned with `process_group(0)`; interrupt and kill go to the group. On Windows
+  only the direct child can be killed, so `REQDRIVE_CLAUDE_BIN` must name a real `.exe`.
+- A spawn error for the agent or the test command is a `HarnessError`, with the text in the detail.
+- Defaults: heartbeat 30 000 ms (`REQDRIVE_HEARTBEAT_MS`), interrupt grace 30 000 ms
+  (`REQDRIVE_GRACE_MS`), both capped at one hour, agent binary `claude` (`REQDRIVE_CLAUDE_BIN`), Green at most
+  `green_max_calls` calls (default 5), Red two attempts. Failure evidence is capped at 8 192 bytes
+  per entry on a char boundary, a test-log tail is 2 048 bytes, a `log` line 2 000 chars.
+- Denied paths: `.github`, `.forgejo`, `.gitea`, `.gitlab-ci.yml`, `.husky`, `.claude`, `.mcp.json`,
+  `.gitmodules`, plus the work order's.
+- Tests must work with a workspace or state path that contains a space, skip non-JSON or partial
+  agent output lines, keep test output in a log file with only a tail in events, and cope with a
+  failing pre-commit hook and CRLF in diffs.
+- Tests are written first. Match the surrounding style. Do not add a dependency without need.
+- Commit messages and PR bodies carry no co-author line and no generated-by footer.
