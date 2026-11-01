@@ -24,7 +24,7 @@ contract crates `harness-protocol`, `factory-spec` and `factory-presets` come fr
 `https://github.com/adbarc92/command-center` at tag `contracts-v0.2.0`. GitHub Actions on
 `ubuntu-latest` and `windows-latest`.
 
-**Spec:** The ReqDrive factory design v0.4, in the private nexus repository: https://github.com/adbarc92/nexus/blob/main/docs/specs/2026-10-04-reqdrive-factory-design.md
+**Spec:** The ReqDrive factory design v0.4, in a private design repository (not linked from this public repository). Paths below use placeholders: `$REQDRIVE_CHECKOUT` is the main reqdrive checkout, `$WORKTREES` the directory that holds lane worktrees, and `$DESIGN_REPO` a checkout of the design repository.
 
 ## Global Constraints
 
@@ -40,7 +40,7 @@ contract crates `harness-protocol`, `factory-spec` and `factory-presets` come fr
 **Rules for every lane.**
 
 - Work only in your worktree. Never edit, commit, stash or switch branches in the main checkout
-  at `D:\MajorProjects\INFRASTRUCTURE\reqdrive`.
+  at `$REQDRIVE_CHECKOUT`.
 - Need a change in a file you do not own? Do not make it. Put it in your final report.
 - Test first: write the test, run it, watch it fail, then write the code (doctrine C1).
 - Finish by pushing your branch and opening a pull request against `factory/m0`. Do not merge,
@@ -229,7 +229,7 @@ skeleton, `forms/registry.md`, `forms/contract.lock.json`, `README.md`, `CLAUDE.
 
 **Reads:** this plan; the repository as it stands at `origin/main`.
 
-**Worktree and branch:** worktree `D:\MajorProjects\.swarm-wt\m0-rd-coord`. It creates the
+**Worktree and branch:** worktree `$WORKTREES/m0-rd-coord`. It creates the
 integration branch `factory/m0` from `origin/main` and pushes it, then works on
 `feat/m0-scaffold` and opens a pull request against `factory/m0`.
 
@@ -266,16 +266,16 @@ the archived suite); `rustup`.
 - [ ] **Step 1: Create the worktree and the integration branch**
 
 ```bash
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-scaffold \
-  /d/MajorProjects/.swarm-wt/m0-rd-coord origin/main
-cd /d/MajorProjects/.swarm-wt/m0-rd-coord
+git -C $REQDRIVE_CHECKOUT fetch origin
+git -C $REQDRIVE_CHECKOUT worktree add --no-track -b feat/m0-scaffold \
+  $WORKTREES/m0-rd-coord origin/main
+cd $WORKTREES/m0-rd-coord
 git push origin origin/main:refs/heads/factory/m0
 git ls-remote --heads origin factory/m0
 ```
 
 Expected: the last command prints one line ending `refs/heads/factory/m0`. Every later command
-in this lane runs from `/d/MajorProjects/.swarm-wt/m0-rd-coord`.
+in this lane runs from `$WORKTREES/m0-rd-coord`.
 
 - [ ] **Step 2: Record what is there**
 
@@ -4033,7 +4033,7 @@ output for the pull-request body.
 - [ ] **Step 2: Push and open the pull request**
 
 Write the body to a file outside the repository (for example
-`/d/MajorProjects/.swarm-wt/m0-rd-coord-pr.md`) with this content, filling in the outputs:
+`$WORKTREES/m0-rd-coord-pr.md`) with this content, filling in the outputs:
 
 ```markdown
 ## What changed
@@ -4065,7 +4065,7 @@ The archived Bash suite, run from its new location: <paste the two result lines>
 git push -u origin feat/m0-scaffold
 gh pr create --base factory/m0 --head feat/m0-scaffold \
   --title "M0 scaffold: archive the Bash tree, cargo workspace, xtask, CI" \
-  --body-file /d/MajorProjects/.swarm-wt/m0-rd-coord-pr.md
+  --body-file $WORKTREES/m0-rd-coord-pr.md
 ```
 
 - [ ] **Step 3: Watch CI**
@@ -4089,7 +4089,7 @@ itself, fix the workflow, commit, push, and say so in the report. Do not merge.
 `docs/superpowers/plans/2026-10-04-factory-m1-harness.md`; the design (private; read it, never
 paste from it).
 
-**Worktree and branch:** worktree `D:\MajorProjects\.swarm-wt\m0-rd-forms`, branch
+**Worktree and branch:** worktree `$WORKTREES/m0-rd-forms`, branch
 `feat/m0-forms` cut from `origin/factory/m0`, pull request against `factory/m0`.
 
 **Needs:** RD-COORD merged into `factory/m0` (owner action A2); the milestone 1 harness plan on
@@ -4131,10 +4131,10 @@ Form can be written in full here. It is also the example to imitate for the othe
 - [ ] **Step 1: Create the worktree**
 
 ```bash
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-forms \
-  /d/MajorProjects/.swarm-wt/m0-rd-forms origin/factory/m0
-cd /d/MajorProjects/.swarm-wt/m0-rd-forms
+git -C $REQDRIVE_CHECKOUT fetch origin
+git -C $REQDRIVE_CHECKOUT worktree add --no-track -b feat/m0-forms \
+  $WORKTREES/m0-rd-forms origin/factory/m0
+cd $WORKTREES/m0-rd-forms
 test -f docs/forms.md && test -f forms/registry.md && cargo xtask parity
 ```
 
@@ -4421,7 +4421,7 @@ Run every command in the "Verify" table at the top of this lane and keep the out
 
 - [ ] **Step 1: Write the body and open the pull request**
 
-Write the body to `/d/MajorProjects/.swarm-wt/m0-rd-forms-pr.md`:
+Write the body to `$WORKTREES/m0-rd-forms-pr.md`:
 
 ```markdown
 ## What this is
@@ -4462,7 +4462,7 @@ choice to be made; or "none">
 git push -u origin feat/m0-forms
 gh pr create --base factory/m0 --head feat/m0-forms \
   --title "M0 forms: draft Forms for milestone 1's harness crates" \
-  --body-file /d/MajorProjects/.swarm-wt/m0-rd-forms-pr.md
+  --body-file $WORKTREES/m0-rd-forms-pr.md
 gh pr checks --watch
 ```
 
@@ -4490,7 +4490,7 @@ It does not edit `xtask/**`, `.github/**`, any Form, or `crates/runtime/src/lib.
 its reference harness `harness-fake` at the tag; the supervisor's specification, for the order
 of observations.
 
-**Worktree and branch:** worktree `D:\MajorProjects\.swarm-wt\m0-rd-skel`, branch
+**Worktree and branch:** worktree `$WORKTREES/m0-rd-skel`, branch
 `feat/m0-skeleton` cut from `origin/factory/m0`, pull request against `factory/m0`.
 
 **Needs:** RD-COORD and RD-FORMS merged into `factory/m0` (owner actions A2, A4); the tag
@@ -4531,10 +4531,10 @@ kit's line for it.
 
 ```bash
 git ls-remote --tags https://github.com/adbarc92/command-center contracts-v0.2.0
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-skeleton \
-  /d/MajorProjects/.swarm-wt/m0-rd-skel origin/factory/m0
-cd /d/MajorProjects/.swarm-wt/m0-rd-skel
+git -C $REQDRIVE_CHECKOUT fetch origin
+git -C $REQDRIVE_CHECKOUT worktree add --no-track -b feat/m0-skeleton \
+  $WORKTREES/m0-rd-skel origin/factory/m0
+cd $WORKTREES/m0-rd-skel
 cargo xtask test static
 ```
 
@@ -8968,7 +8968,7 @@ git commit -m "feat(contract): run the conformance kit in the contract tier; spe
 git push -u origin feat/m0-skeleton
 ```
 
-Write the body to `/d/MajorProjects/.swarm-wt/m0-rd-skel-pr.md`:
+Write the body to `$WORKTREES/m0-rd-skel-pr.md`:
 
 ```markdown
 ## What changed
@@ -8998,7 +8998,7 @@ plan; or "none">
 ```bash
 gh pr create --base factory/m0 --head feat/m0-skeleton \
   --title "M0 walking skeleton: reqdrive harness --fake passes the conformance kit" \
-  --body-file /d/MajorProjects/.swarm-wt/m0-rd-skel-pr.md
+  --body-file $WORKTREES/m0-rd-skel-pr.md
 gh pr checks --watch
 ```
 
@@ -9025,9 +9025,9 @@ two files are written by hand, and the format they follow is documented.
 the findings of spikes S6 and S7 when they exist (private; read them, never paste from them).
 
 **Worktree and branch:**
-- `reqdrive`: worktree `D:\MajorProjects\.swarm-wt\m0-rd-sandbox`, branch `feat/m0-repo-config`
+- `reqdrive`: worktree `$WORKTREES/m0-rd-sandbox`, branch `feat/m0-repo-config`
   cut from `origin/factory/m0`, pull request against `factory/m0`.
-- Each sandbox repository: a fresh clone under `D:\MajorProjects\.swarm-wt\`
+- Each sandbox repository: a fresh clone under `$WORKTREES/`
   (`m0-rd-sandbox-node`, `m0-rd-sandbox-cargo`), branch `feat/onboard-reqdrive`, pull request
   against that repository's `main`. Neither has an integration branch.
 
@@ -9059,10 +9059,10 @@ for the two preset names. Owner action A7 for Task 3. Owner action A8 for Task 4
 - [ ] **Step 1: Create the worktree**
 
 ```bash
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add --no-track -b feat/m0-repo-config \
-  /d/MajorProjects/.swarm-wt/m0-rd-sandbox origin/factory/m0
-cd /d/MajorProjects/.swarm-wt/m0-rd-sandbox
+git -C $REQDRIVE_CHECKOUT fetch origin
+git -C $REQDRIVE_CHECKOUT worktree add --no-track -b feat/m0-repo-config \
+  $WORKTREES/m0-rd-sandbox origin/factory/m0
+cd $WORKTREES/m0-rd-sandbox
 grep -n "repo-config.md" README.md
 ```
 
@@ -9186,8 +9186,8 @@ Expected: the static tier passes; the pull request opens. Do not merge.
 - [ ] **Step 1: Clone and look**
 
 ```bash
-gh repo clone adbarc92/command-center-agent-sandbox /d/MajorProjects/.swarm-wt/m0-rd-sandbox-node
-cd /d/MajorProjects/.swarm-wt/m0-rd-sandbox-node
+gh repo clone adbarc92/command-center-agent-sandbox $WORKTREES/m0-rd-sandbox-node
+cd $WORKTREES/m0-rd-sandbox-node
 git checkout --no-track -b feat/onboard-reqdrive
 git ls-files
 cat package.json
@@ -9330,8 +9330,8 @@ only a README):
 
 ```bash
 gh repo view adbarc92/command-center-agent-sandbox-cargo --json name,visibility
-gh repo clone adbarc92/command-center-agent-sandbox-cargo /d/MajorProjects/.swarm-wt/m0-rd-sandbox-cargo
-cd /d/MajorProjects/.swarm-wt/m0-rd-sandbox-cargo
+gh repo clone adbarc92/command-center-agent-sandbox-cargo $WORKTREES/m0-rd-sandbox-cargo
+cd $WORKTREES/m0-rd-sandbox-cargo
 git checkout --no-track -b feat/onboard-reqdrive
 ```
 
@@ -9496,13 +9496,13 @@ finding changes the format.
 - Consumes: the findings of spike S6 (are test ids stable, unique and readable from both the
   report and the source, per runner?) and spike S7 (can setup fill a cache once, and can the
   other commands then run offline in a throwaway copy of the tree?). They are in the private
-  nexus repository under `docs/spikes/`, named `2026-10-s6-…md` and `2026-10-s7-…md`.
+  design repository under `docs/spikes/`, named `2026-10-s6-…md` and `2026-10-s7-…md`.
 - Produces: two configuration files whose header lists no unconfirmed assumption.
 
 - [ ] **Step 1: Find the findings**
 
 ```bash
-ls /d/MajorProjects/NEXUS/docs/spikes/2026-10-s6-*.md /d/MajorProjects/NEXUS/docs/spikes/2026-10-s7-*.md
+ls $DESIGN_REPO/docs/spikes/2026-10-s6-*.md $DESIGN_REPO/docs/spikes/2026-10-s7-*.md
 ```
 
 Expected: one file for each spike. Read them; change nothing in that repository. If either is
