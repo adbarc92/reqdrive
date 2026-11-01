@@ -653,7 +653,12 @@ rather than claiming more.
 
 **Permissions** follow from that:
 
-- **`isolation: "container"`:** `--permission-mode bypassPermissions`.
+- **`isolation: "container"`:** `--permission-mode bypassPermissions`, but only inside a detected
+  container. The field is self-declared, so validation looks for evidence before anything else
+  (on Linux: `/.dockerenv`, `/run/.containerenv`, a non-empty `container` or
+  `KUBERNETES_SERVICE_HOST` variable, or a container runtime named in `/proc/1/cgroup`) and ends
+  the attempt as `work_order_invalid` without it. There is no detection on Windows or macOS, so
+  `container` is always refused there.
 - **Otherwise:** `--permission-mode acceptEdits`, plus
   `--allowedTools "Bash(<test_command>),Bash(<test_command> *)"` and whatever `agent_allow` lists.
   The prefix form lets the agent run a single test file. The agent then cannot write `.git` (a

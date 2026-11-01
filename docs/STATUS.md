@@ -24,6 +24,15 @@ Roadmap: [`ROADMAP.md`](../ROADMAP.md).
 
 ## Session log
 
+### 2026-10-31: container isolation check
+
+- **Fixed:** `isolation: "container"` (which runs the agent with `bypassPermissions`) was taken on
+  the work order's word. Validation now refuses it as `work_order_invalid` unless it detects a
+  container (Linux only: marker files, the `container` or `KUBERNETES_SERVICE_HOST` variable, or
+  `/proc/1/cgroup`), and logs the evidence when it does. It is always refused on Windows and macOS.
+- **State delta:** README isolation section and spec section 3.9 updated; stronger isolation proof
+  added to the roadmap.
+
 ### 2026-10-31: live check, merges
 
 - **Live check:** one real Haiku call (`claude` 2.1.296). The parser's field paths matched; the

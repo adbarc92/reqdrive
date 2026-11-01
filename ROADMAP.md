@@ -44,6 +44,10 @@ The design is
 - **Hermetic Check.** Check runs after `reset --hard` and `clean -fd`, which keep ignored files, so
   ignored build output or dependencies can make it pass. Freezing or removing ignored files before
   Check would make it hermetic. Until then the orchestrator runs its own tests.
+- **Stronger isolation proof.** `isolation: "container"` is accepted on local evidence (marker
+  files, environment variables, `/proc/1/cgroup`), which a process on the host could fake. An
+  attestation the orchestrator signs, and detection of Windows containers (where `container` is
+  refused today), would make the claim checkable.
 - **A second Ctrl-C to force exit.** Today every interrupt waits for the current child's grace.
 - **An abandoned stdout reader** (the agent exited but a leftover process holds its pipe) stays
   blocked on its thread until that process closes the pipe or the harness exits.
