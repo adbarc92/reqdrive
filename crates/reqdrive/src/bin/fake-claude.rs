@@ -5,7 +5,9 @@
 //!   the needle). Exit 0 if all hold, 1 otherwise.
 //! - `fake-claude spew <bytes>`: prints that many bytes of text and exits 0.
 //! - `fake-claude hold <ms>`: sleeps that long and exits 0. A call's `orphan_sleep_ms` starts
-//!   one in the background, holding the call's stdout open after the call exits.
+//!   one in the background, holding the call's stdout open after the call exits. A call's
+//!   `null_orphan_sleep_ms` starts one with stdin, stdout and stderr all null, so it holds only
+//!   the handles it inherits implicitly.
 //! - Otherwise it acts as `claude`, driven by the JSON script `$FAKE_CLAUDE_SCRIPT`
 //!   (`{"calls":[…]}`), picking the call from the counter file `$FAKE_CLAUDE_COUNTER` and
 //!   logging its argv to `$FAKE_CLAUDE_LOG`. A call's optional `git_commit_all: "<msg>"` runs
@@ -87,17 +89,22 @@ fn spew(bytes: usize) -> i32 {
     0
 }
 
-/// Starts `fake-claude hold <ms>` without waiting for it. It inherits our stdout, so the
-/// pipe stays open after we exit. On Unix it leads a process group of its own, as a process
-/// that called `setsid` would, so a sweep of our group does not reach it.
-fn orphan(ms: u64) {
+/// Starts `fake-claude hold <ms>` without waiting for it. With `keep_stdout` it inherits our
+/// stdout, so the pipe stays open after we exit; without it all three stdio are null. On Unix
+/// it leads a process group of its own, as a process that called `setsid` would, so a sweep of
+/// our group does not reach it.
+fn orphan(ms: u64, keep_stdout: bool) {
     let exe = std::env::current_exe().expect("current_exe");
     let mut cmd = std::process::Command::new(exe);
     // Not the workspace: a live process's cwd cannot be deleted on Windows.
     cmd.args(["hold", &ms.to_string()])
         .current_dir(std::env::temp_dir())
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::inherit())
+        .stdout(if keep_stdout {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::null()
+        })
         .stderr(std::process::Stdio::null());
     #[cfg(unix)]
     {
@@ -221,7 +228,10 @@ fn act_as_claude(args: &[String]) -> i32 {
     }
     drop(out);
     if let Some(ms) = call["orphan_sleep_ms"].as_u64() {
-        orphan(ms);
+        orphan(ms, true);
+    }
+    if let Some(ms) = call["null_orphan_sleep_ms"].as_u64() {
+        orphan(ms, false);
     }
 
     call["exit"].as_i64().unwrap_or(0) as i32

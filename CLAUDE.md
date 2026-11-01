@@ -54,7 +54,9 @@ crates/reqdrive/tests/   integration tests that run the real binaries; common/ h
   and before every push, and a mismatch is `scope_violation`.
 - **Unknown is `null`, never 0.** Every count is an `Option<u64>`.
 - **Children never inherit stdout.** Every `Command` sets `stdin` (null, or a file for the prompt)
-  and an explicit `stdout`. A child must not be able to forge an event.
+  and an explicit `stdout`. A child must not be able to forge an event. On Windows std passes every
+  inheritable handle to every child whatever its `Stdio`, so `main` first makes the harness's own
+  std handles non-inheritable (`proc::stop_std_handle_inheritance`).
 - **The seam rules are hard gates; everything else is warn-only.** Denied paths, the test freeze,
   the criterion-id check and the red check fail the attempt. Heuristics, such as the
   dangerous-pattern scan, become `log` events and never block.
@@ -77,7 +79,8 @@ Integration tests find the bins through `CARGO_BIN_EXE_*`, which is not set for 
 ## Conventions
 
 - Toolchain 1.93.1 (`rust-toolchain.toml`), edition 2021. `#![deny(unsafe_code)]` in `lib.rs`;
-  in `src/`, only `proc.rs`'s Unix `kill` calls carry `#[allow(unsafe_code)]`. Do not use `forbid`.
+  in `src/`, only `proc.rs`'s Unix `kill` calls and its Windows `SetHandleInformation` call carry
+  `#[allow(unsafe_code)]`. Do not use `forbid`.
 - The work-order `schema` is exactly `"story-work-order/0"`. The event envelope is
   `{"v":1,"attempt_id","seq","ts"}`, applied after the body so a body cannot override it.
 - Outcomes: `pushed`, `no_change`, `failed`, `halted`. There is no `pr_open` in v1.

@@ -36,6 +36,53 @@ pub fn scrub_repo_env(cmd: &mut Command) {
     }
 }
 
+/// Makes the harness's own stdin, stdout and stderr non-inheritable, so no child (or its
+/// descendants) holds them. Call it first thing in `main`.
+///
+/// std spawns every Windows child with handle inheritance on, so without this each child
+/// would hold the harness's stdout whatever its own `Stdio` is: a leftover descendant would
+/// keep the orchestrator's pipe open, and a child could write events. `Stdio::inherit` is
+/// unaffected (std duplicates the handle as inheritable for that child). Best effort: every
+/// handle is tried, a missing one is skipped, and the first failure is returned.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn stop_std_handle_inheritance() -> io::Result<()> {
+    type Handle = *mut std::ffi::c_void;
+    const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+    const HANDLE_FLAG_INHERIT: u32 = 0x1;
+    const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(n_std_handle: u32) -> Handle;
+        fn SetHandleInformation(h_object: Handle, dw_mask: u32, dw_flags: u32) -> i32;
+    }
+    let mut first_err = None;
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle takes a plain constant and returns a handle, null or
+        // INVALID_HANDLE_VALUE; SetHandleInformation only changes the flag on a handle the
+        // process owns, and is given only a real one.
+        unsafe {
+            let h = GetStdHandle(which);
+            if h.is_null() || h == INVALID_HANDLE_VALUE {
+                continue;
+            }
+            if SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0) == 0 && first_err.is_none() {
+                first_err = Some(io::Error::last_os_error());
+            }
+        }
+    }
+    first_err.map_or(Ok(()), Err)
+}
+
+/// A no-op: on Unix std gives a child's fds 0 to 2 from its `Stdio` and opens everything else
+/// close-on-exec.
+#[cfg(not(windows))]
+pub fn stop_std_handle_inheritance() -> io::Result<()> {
+    Ok(())
+}
+
 /// Sets [`interrupted`] on SIGINT/SIGTERM (Ctrl-C on Windows). Safe to call more than once.
 pub fn install_signal_handler() -> Result<(), String> {
     match ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst)) {

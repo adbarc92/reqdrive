@@ -7,8 +7,7 @@ session log below it is appended newest first.
 
 - **TL;DR:** the Rust story harness (`reqdrive story <work-order.json>`) is built and tested
   offline against a fake agent. The final whole-branch review is done, its findings are fixed,
-  and a scoped re-review confirmed every fix. One older Windows issue (handle inheritance) is on
-  the roadmap.
+  and a scoped re-review confirmed every fix. The Windows handle-inheritance issue is fixed.
   The live check against the real `claude` CLI has not run: it waits for the owner's go-ahead.
 - **Branch:** `feat/story-harness-rust`, not merged. PR #7, stacked on the spec PR #6.
 - **Readiness:** the three checks (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
@@ -25,6 +24,15 @@ Plan: [`docs/superpowers/plans/2026-10-30-story-harness-rust.md`](superpowers/pl
 Roadmap: [`ROADMAP.md`](../ROADMAP.md).
 
 ## Session log
+
+### 2026-10-31: Windows handle inheritance
+
+- **Fixed:** on Windows every child (and its descendants) held the harness's stdout and stderr
+  through std's handle inheritance, so a descendant outliving the run kept the orchestrator's pipe
+  open. `main` now clears `HANDLE_FLAG_INHERIT` on the three std handles first
+  (`proc::stop_std_handle_inheritance`); a Windows-only test reads stdout to EOF past a 20 s
+  null-stdio orphan.
+- **State delta:** the ROADMAP item is closed; CLAUDE.md, the README and spec section 10 updated.
 
 ### 2026-10-31: final review fixes
 

@@ -189,6 +189,9 @@ or a test does. Isolating each attempt is the orchestrator's job:
   once the leader has exited, after an interrupt or not, the rest of the group is killed at once.
 - On Windows only the direct child is killed, and it is killed at the interrupt without a grace
   period.
+- No child holds the harness's stdout or stderr, so a leftover process cannot keep the
+  orchestrator's pipe open or write events. (On Windows the harness makes its std handles
+  non-inheritable at startup.)
 - After the agent exits, the harness reads the rest of its stdout for the grace period (at least
   1 s). If a leftover process still holds the pipe open after that, the harness stops reading,
   keeps what it has, and emits a `usage_incomplete` error.

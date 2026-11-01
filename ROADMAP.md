@@ -47,13 +47,6 @@ The design is
 - **Hermetic Check.** Check runs after `reset --hard` and `clean -fd`, which keep ignored files, so
   ignored build output or dependencies can make it pass. Freezing or removing ignored files before
   Check would make it hermetic. Until then the orchestrator runs its own tests.
-- **Windows handle inheritance.** Rust's standard library spawns every Windows child with handle
-  inheritance on, so each child (git, the agent, the test command and their descendants) also
-  holds the harness's own stdout and stderr, whatever its own `Stdio` is. A descendant that
-  outlives reqdrive keeps the orchestrator's pipe open, so an orchestrator that reads to EOF can
-  hang until it exits, and a hostile test command could write forged event lines. A fix is to
-  clear `HANDLE_FLAG_INHERIT` on the harness's three std handles at startup (`SetHandleInformation`,
-  an `#[allow(unsafe_code)]` call in `proc.rs`). Job Objects alone do not fix it.
 - **A second Ctrl-C to force exit.** Today every interrupt waits for the current child's grace.
 - **An abandoned stdout reader** (the agent exited but a leftover process holds its pipe) stays
   blocked on its thread until that process closes the pipe or the harness exits.

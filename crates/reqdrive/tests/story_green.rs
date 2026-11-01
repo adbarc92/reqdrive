@@ -320,6 +320,45 @@ fn orphan_holding_agent_stdout_does_not_hang_the_run() {
     );
 }
 
+/// On Windows std spawns every child with handle inheritance on, so a descendant whose own
+/// stdio is all null still holds every inheritable handle of its parents. The harness must not
+/// pass its own stdout down that way: the orchestrator reading to EOF would wait on the
+/// descendant.
+#[cfg(windows)]
+#[test]
+fn descendant_outliving_the_run_does_not_hold_harness_stdout() {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    let f = Fixture::new();
+    // The red call exits but leaves a process, all stdio null, alive for 20 s.
+    let mut red = red_ok();
+    red["null_orphan_sleep_ms"] = json!(20_000);
+    let mut cmd = f.command(&f.order().to_string(), &script(vec![red, green_ok()]));
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let started = Instant::now();
+    let mut child = cmd.spawn().expect("spawn reqdrive");
+    let mut stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    // Never joined when the test fails: the descendant may hold the pipe past the test.
+    std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        let _ = tx.send((out, started.elapsed()));
+    });
+    let got = rx.recv_timeout(Duration::from_secs(15));
+    let status = child.wait().expect("wait for reqdrive");
+    let (out, took) = got.expect("reqdrive's stdout reached EOF within 15 s");
+    assert!(took < Duration::from_secs(12), "EOF took {took:?}");
+    assert_eq!(status.code(), Some(0));
+    let events: Vec<Value> = String::from_utf8_lossy(&out)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad line {l:?}: {e}")))
+        .collect();
+    let r = result(&events);
+    assert_eq!(r["outcome"], "pushed", "{r}");
+}
+
 #[test]
 fn closed_stdout_halts_the_run_and_keeps_the_logs() {
     let f = Fixture::new();

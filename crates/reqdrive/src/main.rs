@@ -43,6 +43,10 @@ fn story_command(work_order: &Path) -> i32 {
 }
 
 fn main() {
+    // Before any child is spawned, so none of them holds the orchestrator's pipes.
+    if let Err(e) = proc::stop_std_handle_inheritance() {
+        eprintln!("[reqdrive] warning: cannot make the std handles non-inheritable: {e}");
+    }
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let code = match args.as_slice() {
         [flag] if flag == "--version" => {
