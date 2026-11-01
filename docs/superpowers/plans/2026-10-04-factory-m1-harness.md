@@ -26,7 +26,7 @@ one another's code.
 `factory-spec` and `factory-presets` at tag `contracts-v0.2.0`. The `docker` and `git`
 command lines. The Claude Code CLI, pinned in the agent image.
 
-**Spec:** The ReqDrive factory design v0.4, in the private nexus repository: https://github.com/adbarc92/nexus/blob/main/docs/specs/2026-10-04-reqdrive-factory-design.md
+**Spec:** The ReqDrive factory design v0.4, in a private design repository (not linked from this public repository). Paths below use placeholders: `$REQDRIVE_CHECKOUT` is the main reqdrive checkout, `$WORKTREES` the directory that holds lane worktrees, and `$DESIGN_REPO` a checkout of the design repository.
 
 ## Global Constraints
 
@@ -44,7 +44,7 @@ from `origin/factory/m1` **after wave 0 has merged into it**.
 **Rules for every lane.**
 
 - Work only in your worktree. Never edit, commit, stash or switch branches in the main
-  checkout at `D:\MajorProjects\INFRASTRUCTURE\reqdrive`.
+  checkout at `$REQDRIVE_CHECKOUT`.
 - Write only the files your lane lists under **Owns**. In your own crate that is the files
   whose bodies say `unimplemented!("lane RD-<LANE>")`, `src/behaviours.rs`, and tests under
   `tests/` whose names start with `integration_`. Unless your lane's Owns says otherwise, it
@@ -237,7 +237,7 @@ body is needed for the crate to compile, it is `unimplemented!("lane RD-…")`.
 **Reads:** this plan; `docs/forms.md`; the eight Forms under `forms/` (frozen by the owner at
 the end of milestone 0); the workspace as it stands on `origin/factory/m1`.
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-interfaces`, branch
+**Worktree and branch:** `$WORKTREES/m1-rd-interfaces`, branch
 `feat/m1-interfaces`, cut from `origin/factory/m1`, pull request against `factory/m1`.
 
 **Needs:** milestone 0 merged to `main` in this repository; the branch `factory/m1` cut from
@@ -272,10 +272,10 @@ The numbers in the second and third rows were measured on this plan's scratch bu
 - [ ] **Step 1: Create the worktree and see the baseline green**
 
 ```bash
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive fetch origin
-git -C /d/MajorProjects/INFRASTRUCTURE/reqdrive worktree add \
-  /d/MajorProjects/.swarm-wt/m1-rd-interfaces -b feat/m1-interfaces origin/factory/m1
-cd /d/MajorProjects/.swarm-wt/m1-rd-interfaces
+git -C $REQDRIVE_CHECKOUT fetch origin
+git -C $REQDRIVE_CHECKOUT worktree add \
+  $WORKTREES/m1-rd-interfaces -b feat/m1-interfaces origin/factory/m1
+cd $WORKTREES/m1-rd-interfaces
 cargo xtask test static && cargo xtask test unit && cargo xtask test contract
 ```
 
@@ -10355,7 +10355,7 @@ Run every command in the "Verify" table at the top of this part and keep the out
 
 - [ ] **Step 4: Commit, push, open the pull request**
 
-Write the body to `/d/MajorProjects/.swarm-wt/m1-rd-interfaces-pr.md`:
+Write the body to `$WORKTREES/m1-rd-interfaces-pr.md`:
 
 ```markdown
 ## What changed
@@ -10384,7 +10384,7 @@ git commit -m "chore(m1): lock milestone 1's contract tests and register their g
 git push -u origin feat/m1-interfaces
 gh pr create --base factory/m1 --head feat/m1-interfaces \
   --title "M1 wave 0: interfaces, in-memory implementations and contract suites" \
-  --body-file /d/MajorProjects/.swarm-wt/m1-rd-interfaces-pr.md
+  --body-file $WORKTREES/m1-rd-interfaces-pr.md
 gh pr checks --watch
 ```
 
@@ -10438,7 +10438,7 @@ under it), `crates/engine/src/behaviours.rs`.
 `crates/engine/src/testkit.rs` (Task 9); `crates/cli/src/harness.rs` (milestone 0's driver
 over fakes: the shape to follow); the `harness-protocol` README, "What a harness must do".
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-engine`, branch `feat/m1-engine`,
+**Worktree and branch:** `$WORKTREES/m1-rd-engine`, branch `feat/m1-engine`,
 cut from `origin/factory/m1` after wave 0 merges; pull request against `factory/m1`.
 
 **Needs:** wave 0. Nothing from any other lane: every port it drives has an in-memory
@@ -12280,7 +12280,7 @@ none. A `SendError::Order` is a bug in this crate: end as `Ended::Fault`.
 **Reads:** this lane; `forms/workspace.md`; `crates/workspace/src/api.rs` and
 `src/testkit.rs` (Part 1, Task 2); `docs/repo-config.md`.
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-workspace`, branch
+**Worktree and branch:** `$WORKTREES/m1-rd-workspace`, branch
 `feat/m1-workspace`, cut from `origin/factory/m1` after wave 0 merges; pull request against
 `factory/m1`.
 
@@ -13610,7 +13610,7 @@ cannot be started is `WorkspaceError::Unavailable`.
 (Part 1, Task 4); `crates/workspace/src/api.rs` and its `testkit.rs` (Task 2);
 `crates/payload/src/api.rs` (the two reply schemas).
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-runtime`, branch
+**Worktree and branch:** `$WORKTREES/m1-rd-runtime`, branch
 `feat/m1-runtime`, cut from `origin/factory/m1` after wave 0 merges; pull request against
 `factory/m1`.
 
@@ -14676,7 +14676,7 @@ cost is always `Cost::Estimate` for this adapter.
 clearest statement of them); the `Preset` trait and `testkit::ReportBuilder` of
 `factory-presets`.
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-oracle`, branch `feat/m1-oracle`,
+**Worktree and branch:** `$WORKTREES/m1-rd-oracle`, branch `feat/m1-oracle`,
 cut from `origin/factory/m1` after wave 0 merges; pull request against `factory/m1`.
 
 **Needs:** wave 0. Nothing else: this crate takes bytes and text and returns values.
@@ -15132,7 +15132,7 @@ check container, in another crate, and this crate reads only the report.
 **Reads:** this lane; `forms/payload.md`; `crates/payload/src/api.rs` and `src/testkit.rs`
 (Part 1, Task 3); the prompts it ports (below).
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-payload`, branch
+**Worktree and branch:** `$WORKTREES/m1-rd-payload`, branch
 `feat/m1-payload`, cut from `origin/factory/m1` after wave 0 merges; pull request against
 `factory/m1`.
 
@@ -15680,7 +15680,7 @@ ids, one verdict per subject. Deserialise with `serde_json::from_value` into the
 (Part 1, Task 6); `crates/workspace/src/api.rs` and its `testkit.rs` (Task 2);
 `factory_spec::Scope` and the `Preset` trait.
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-controls`, branch
+**Worktree and branch:** `$WORKTREES/m1-rd-controls`, branch
 `feat/m1-controls`, cut from `origin/factory/m1` after wave 0 merges; pull request against
 `factory/m1`.
 
@@ -16424,7 +16424,7 @@ the matching itself is `factory-spec`'s.
 (Part 1, Task 7: `MemoryLedger` in the test kit holds a complete replay and evidence
 assembly, and is the clearest statement of both).
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-ledger`, branch `feat/m1-ledger`,
+**Worktree and branch:** `$WORKTREES/m1-rd-ledger`, branch `feat/m1-ledger`,
 cut from `origin/factory/m1` after wave 0 merges; pull request against `factory/m1`.
 
 **Needs:** wave 0. Nothing else.
@@ -16900,7 +16900,7 @@ rest: the protocol counts rounds from 1 per process.
 (milestone 0: `Unit` and `ScriptedPeer`, which this lane builds on and does not change); the
 `harness-protocol` README, "What a harness must do", and its `monitor` module.
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-speaker`, branch
+**Worktree and branch:** `$WORKTREES/m1-rd-speaker`, branch
 `feat/m1-speaker`, cut from `origin/factory/m1` after wave 0 merges; pull request against
 `factory/m1`.
 
@@ -17933,7 +17933,7 @@ This lane runs **last**: it wires the other eight.
 `crates/cli/src/harness.rs` (milestone 0's driver, the shape to follow for the handshake and
 the exit codes); `docs/repo-config.md`.
 
-**Worktree and branch:** `D:\MajorProjects\.swarm-wt\m1-rd-cli`, branch `feat/m1-cli`, cut
+**Worktree and branch:** `$WORKTREES/m1-rd-cli`, branch `feat/m1-cli`, cut
 from `origin/factory/m1` **after the other eight lanes have merged**; pull request against
 `factory/m1`.
 
