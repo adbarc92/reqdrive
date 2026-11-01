@@ -9,14 +9,14 @@ session log below it is appended newest first.
   offline against a fake agent. The final whole-branch review is done, its findings are fixed,
   and a scoped re-review confirmed every fix. The Windows handle-inheritance issue is fixed. A
   single live `claude` call confirmed the stream-json parser against real output.
-- **Branch:** `feat/story-harness-rust`, PR #7 against `main` (the spec PR #6 is merged).
+- **Branch:** on `main` (PR #7 merged). No open PRs for the harness.
 - **Readiness:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`
   pass in CI on Ubuntu and Windows.
 - **Known gaps:** see [`ROADMAP.md`](../ROADMAP.md) (a live end-to-end story, thinking tokens,
   deferred scope, open questions Q4 to Q14, planned improvements, known minor issues).
 - **Next steps:**
-  1. Merge PR #7 once CI is green.
-  2. Run a live end-to-end story on a sandbox repository, with the owner's go-ahead (ROADMAP, Next).
+  1. Run a live end-to-end story on a sandbox repository, with the owner's go-ahead (ROADMAP, Next).
+  2. Rule on the open questions Q4 to Q14 (ROADMAP, Open questions).
 
 Design: [`docs/superpowers/specs/2026-10-30-story-harness-mode-design.md`](superpowers/specs/2026-10-30-story-harness-mode-design.md).
 Plan: [`docs/superpowers/plans/2026-10-30-story-harness-rust.md`](superpowers/plans/2026-10-30-story-harness-rust.md).
@@ -32,7 +32,8 @@ Roadmap: [`ROADMAP.md`](../ROADMAP.md).
   (ROADMAP, Next).
 - **Merged:** PR #6 (the spec and plan) and PR #8 (the factory plans no longer name a private
   repository or local paths; earlier history still has the old text).
-- **State delta:** PR #7 targets `main`; the only open item before merge is its CI run.
+- **Merged:** PR #7, the Rust story harness, after CI passed on Ubuntu and Windows.
+- **State delta:** the harness is on `main`; the Bash v0.3 tree is in `archive/bash-v0.3/`.
 
 ### 2026-10-31: Windows handle inheritance
 
