@@ -1,5 +1,19 @@
 # CLAUDE.md
 
+<!-- BEGIN: ACTIVE-SESSION-PICKUP — remove this block once the "Next steps" in docs/STATUS.md dated 2026-10-31 are under way -->
+## Active session pickup
+
+The last session (2026-10-31) ended with work left. Before anything else, read the **State
+summary** and its **Next steps** at the top of [`docs/STATUS.md`](docs/STATUS.md), and the newest
+session-log entry under it. They say:
+
+- what is merged and what waits on the owner (PR #10, if `gh pr view 10` still shows it open),
+- which owner decision unblocks the rest (Q10 in [`ROADMAP.md`](ROADMAP.md)), and
+- assumptions the last session took that may need revisiting.
+
+If those next steps are already done, this block is stale: delete it.
+<!-- END: ACTIVE-SESSION-PICKUP -->
+
 `reqdrive story <work-order.json>` runs one story to one pushed branch and reports it as JSON-lines
 events on stdout. This file is for agents working in this repository. The user-facing description
 is in [`README.md`](README.md).

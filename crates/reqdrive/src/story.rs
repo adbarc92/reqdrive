@@ -19,7 +19,7 @@ use crate::proc::{self, EndedBy, TestRun};
 use crate::prompts::{
     dangerous_patterns, green_prompt, read_claims, red_prompt, GreenContext, TestsDefective,
 };
-use crate::workorder::{self, WorkOrder};
+use crate::workorder::{self, Isolation, WorkOrder};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -274,6 +274,17 @@ fn validate(
 
     // 2. From here on every event carries the attempt id.
     emitter.set_attempt_id(&wo.attempt_id);
+
+    // 2a. `container` turns permissions off, so it is not taken on the work order's word.
+    if wo.isolation == Isolation::Container {
+        let found = workorder::detect_container()
+            .ok_or_else(|| invalid(workorder::no_container_detail()))?;
+        log(
+            emitter,
+            LogStream::System,
+            format!("container detected: {found}"),
+        );
+    }
 
     // 3. The workspace exists; state_dir is empty and outside it.
     let ws = canonical(&wo.workspace).map_err(|e| {

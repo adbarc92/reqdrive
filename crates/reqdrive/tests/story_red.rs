@@ -27,6 +27,42 @@ fn unparsable_order_gives_work_order_invalid_with_null_attempt() {
 }
 
 #[test]
+fn container_isolation_needs_a_detected_container() {
+    let f = Fixture::new();
+    let mut order = f.order();
+    order["isolation"] = json!("container");
+    let (events, code) = f.run(&order, &script(vec![red_ok(), green_ok()]));
+    assert_eq!(code, 0);
+    // The harness inherits this process's environment and filesystem, so the same detection
+    // decides what it must do. Off Linux, and on a CI VM, nothing is detected.
+    match reqdrive::workorder::detect_container() {
+        None => {
+            assert_eq!(category(&events), "work_order_invalid");
+            let r = result(&events);
+            assert_eq!(r["attempt_id"], "a-1");
+            let detail = r["failure"]["detail"].as_str().unwrap();
+            assert!(detail.contains("no container was detected"), "{detail}");
+            assert_eq!(f.calls(), 0);
+            assert!(!f.counter_path().exists(), "the agent must never be called");
+            assert!(
+                !f.state_dir().exists(),
+                "refused before anything is provisioned"
+            );
+        }
+        Some(found) => {
+            assert_ne!(category(&events), "work_order_invalid");
+            let line = format!("container detected: {found}");
+            assert!(
+                events
+                    .iter()
+                    .any(|e| e["type"] == "log" && e["line"] == line.as_str()),
+                "expected a log event {line:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn dirty_workspace_is_rejected() {
     let f = Fixture::new();
     fs::write(f.ws.join("stray.txt"), "x").unwrap();
