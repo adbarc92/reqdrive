@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Read [docs/ROUTER.md](docs/ROUTER.md) first; it routes to every doc.
+
 <!-- BEGIN: ACTIVE-SESSION-PICKUP — remove this block once the "Next steps" in docs/STATUS.md dated 2026-10-31 are under way -->
 ## Active session pickup
 
